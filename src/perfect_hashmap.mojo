@@ -146,6 +146,20 @@ struct PerfectStationMap[
         var idx = Int((k * Self.MULTIPLIER) >> UInt64(Self.SHIFT))
 
         if self.data[idx].stats.count > 0:
+            comptime if Self.TRACK_METRICS:
+                var existing_ptr = self.data[idx].ptr
+                var existing_len = self.data[idx].length
+                if existing_len != length:
+                    self.metrics.total_probes += 1
+                else:
+                    var is_match = True
+                    for i in range(length):
+                        if existing_ptr[i] != ptr[i]:
+                            is_match = False
+                            break
+                    if not is_match:
+                        self.metrics.total_probes += 1
+
             self.data[idx].stats.update(temp)
             comptime if Self.TRACK_METRICS:
                 self.metrics.total_updates += 1
@@ -171,6 +185,20 @@ struct PerfectStationMap[
         var idx = Int((k * Self.MULTIPLIER) >> UInt64(Self.SHIFT))
 
         if self.data[idx].stats.count > 0:
+            comptime if Self.TRACK_METRICS:
+                var existing_ptr = self.data[idx].ptr
+                var existing_len = self.data[idx].length
+                if existing_len != length:
+                    self.metrics.total_probes += 1
+                else:
+                    var is_match = True
+                    for i in range(length):
+                        if existing_ptr[i] != ptr[i]:
+                            is_match = False
+                            break
+                    if not is_match:
+                        self.metrics.total_probes += 1
+
             if incoming.min < self.data[idx].stats.min:
                 self.data[idx].stats.min = incoming.min
             if incoming.max > self.data[idx].stats.max:

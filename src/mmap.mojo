@@ -21,10 +21,9 @@ from std.ffi import external_call
 from std.os.fstat import stat
 
 
-# POSIX constants (same on macOS and Linux)
 comptime O_RDONLY: Int32 = 0
 comptime PROT_READ: Int32 = 1
-comptime MAP_SHARED: Int32 = 1
+comptime MAP_PRIVATE: Int32 = 2
 comptime MAP_FAILED_SENTINEL: Int = -1  # mmap returns (void*)-1 on failure
 
 # madvise constants
@@ -67,7 +66,7 @@ struct MappedFile:
             ](),  # addr  = NULL  (kernel chooses)
             self.size,  # length
             PROT_READ,  # prot
-            MAP_SHARED,  # flags
+            MAP_PRIVATE,  # flags
             self._fd,  # fd
             Int64(0),  # offset
         )

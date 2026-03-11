@@ -1,0 +1,413 @@
+Pittsburgh
+Muscat
+Salt Lake City
+Odesa
+Houston
+New York City
+Brisbane
+Ngaoundéré
+Lviv
+Zagreb
+Bangkok
+Dar es Salaam
+Ségou
+Charlotte
+Nassau
+Las Palmas de Gran Canaria
+Tbilisi
+Stockholm
+Parakou
+Valencia
+Vientiane
+Brussels
+Reggane
+London
+Gabès
+Adelaide
+Antananarivo
+Washington, D.C.
+Whitehorse
+Port Moresby
+Kuopio
+Erbil
+Flores,  Petén
+Palmerston North
+Blantyre
+Kano
+Dushanbe
+Napoli
+Batumi
+Boston
+Belgrade
+Dakar
+Fresno
+Ljubljana
+Tallinn
+Barcelona
+Philadelphia
+Jayapura
+Riga
+Sokoto
+Hamburg
+Hong Kong
+Andorra la Vella
+Nakhon Ratchasima
+Medan
+Gaborone
+Asmara
+Calgary
+Ouahigouya
+Vaduz
+Zürich
+Birao
+Minsk
+Bujumbura
+Dodoma
+Rostov-on-Don
+Vladivostok
+El Paso
+Monterrey
+Dubai
+Honolulu
+Dolisie
+Burnie
+Wau
+Minneapolis
+Columbus
+Wellington
+Anadyr
+Dallas
+Hobart
+Roseau
+Petropavlovsk-Kamchatsky
+Hanga Roa
+Alice Springs
+Kathmandu
+Busan
+Gagnoa
+Livingstone
+Yerevan
+Suva
+Portland (OR)
+Mexicali
+Malé
+Belize City
+Dili
+Nairobi
+Beirut
+Budapest
+Johannesburg
+San Salvador
+Baguio
+Lisbon
+Yangon
+Nuuk
+Hanoi
+Mombasa
+Upington
+Aden
+Jakarta
+Dublin
+Kabul
+Ürümqi
+Sochi
+Mek'ele
+San José
+Yakutsk
+Milwaukee
+Nouadhibou
+Baltimore
+Tel Aviv
+La Ceiba
+Vancouver
+Frankfurt
+Dhaka
+Kunming
+Tamanrasset
+Maun
+Bangui
+Split
+Chittagong
+Skopje
+City of San Marino
+Moncton
+Oulu
+Paris
+Thessaloniki
+Oranjestad
+Berlin
+Chișinău
+Port Vila
+Alexandria
+Bouaké
+Mango
+Mahajanga
+Baku
+Nicosia
+Entebbe
+Palm Springs
+Lahore
+Virginia Beach
+Chihuahua
+Cape Town
+Seattle
+Vienna
+Tehran
+Conakry
+Gangtok
+Oslo
+Makassar
+Omaha
+Darwin
+Sacramento
+Vilnius
+Saint Petersburg
+Bissau
+Panama City
+Ho Chi Minh City
+Ottawa
+Indianapolis
+Libreville
+Anchorage
+İzmir
+Prague
+Da Nang
+Astana
+Yinchuan
+Oklahoma City
+Napier
+Mexico City
+Edinburgh
+Brazzaville
+Sapporo
+Rome
+Los Angeles
+Porto
+Denver
+Cotonou
+Lodwar
+Durban
+Denpasar
+New Delhi
+Albuquerque
+Bishkek
+Pyongyang
+Manila
+Wrocław
+Kyiv
+Copenhagen
+Djibouti
+Marrakesh
+Podgorica
+Hiroshima
+Christchurch
+Louisville
+Maputo
+Kyoto
+Valletta
+Palembang
+Timbuktu
+Niamey
+Tijuana
+Veracruz
+Villahermosa
+George Town
+Tamale
+Beijing
+Halifax
+Douala
+Bratislava
+Ndola
+Odienné
+Toliara
+Surabaya
+Dunedin
+Xi'an
+Tabora
+Arkhangelsk
+Lomé
+Marseille
+Port Sudan
+Boise
+San Antonio
+Managua
+Memphis
+Cairo
+Havana
+Athens
+San Jose
+Phoenix
+Edmonton
+Fukuoka
+Milan
+Erzurum
+Hat Yai
+Ashgabat
+Sofia
+Karachi
+Alexandra
+Honiara
+Juba
+Abha
+Fianarantsoa
+Chongqing
+Warsaw
+Chicago
+Kinshasa
+Bloemfontein
+Miami
+Tokyo
+Ghanzi
+Harbin
+Malabo
+Kuwait City
+Amsterdam
+Thiès
+Pretoria
+N'Djamena
+Tirana
+Heraklion
+Hargeisa
+Melbourne
+Cairns
+St. John's
+Harare
+Kumasi
+Benghazi
+Iqaluit
+Mumbai
+Atlanta
+Launceston
+Las Vegas
+Perth
+Bamako
+Mzuzu
+Pointe-Noire
+Winnipeg
+Zanzibar City
+Chiang Mai
+Taipei
+Bergen
+Mogadishu
+Bucharest
+Tegucigalpa
+Auckland
+San Diego
+Antsiranana
+Kingston
+Jos
+Changsha
+Kandi
+Lhasa
+Lusaka
+Reykjavík
+Montreal
+Pontianak
+Helsinki
+Dampier
+St. Louis
+Praia
+Guangzhou
+Nouakchott
+Tunis
+Lubumbashi
+Toronto
+Bridgetown
+Kuala Lumpur
+Khartoum
+Detroit
+Kankan
+Ifrane
+Kansas City
+Ankara
+Irkutsk
+Yellowknife
+Toluca
+Tucson
+Ahvaz
+Shanghai
+Almaty
+Assab
+Ulaanbaatar
+Jerusalem
+Sarajevo
+Lyon
+Sana'a
+Suwałki
+Lagos
+Rabat
+Abidjan
+Toamasina
+Lake Tekapo
+Nashville
+Luanda
+Palermo
+Garoua
+Lake Havasu City
+Bordeaux
+Rangpur
+Jacksonville
+Manama
+Guadalajara
+Tripoli
+Monaco
+Cracow
+Naha
+Singapore
+Saskatoon
+Da Lat
+Baghdad
+Makurdi
+Damascus
+Hamilton
+Dikson
+Seoul
+Wichita
+Algiers
+Ouagadougou
+Sydney
+Banjul
+Willemstad
+Riyadh
+Canberra
+Yaoundé
+Tabriz
+Karonga
+Tromsø
+Port-Gentil
+Seville
+Ouarzazate
+Niigata
+Istanbul
+La Paz
+Madrid
+Gjoa Haven
+Bata
+San Francisco
+Bulawayo
+Novosibirsk
+Accra
+Murmansk
+Moscow
+New Orleans
+Mandalay
+Bosaso
+Tauranga
+Kampala
+Fairbanks
+Santo Domingo
+Cabo San Lucas
+Tashkent
+Garissa
+Tampa
+Guatemala City
+Luxembourg City
+Bilbao
+Austin
+Phnom Penh
+Addis Ababa
+Colombo
+Kolkata
+San Juan
+Saint-Pierre
+Abéché

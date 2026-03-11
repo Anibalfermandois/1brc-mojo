@@ -4,15 +4,18 @@ This document outlines the technical architecture and the specific optimizations
 
 ## 0. Benchmarking & Profiling
 
-We use a custom `Profiler` (in `profiler.mojo`) to measure the performance of different pipeline stages.
+We use a custom `Profiler` (in `src/profiler.mojo`) to measure the performance of different pipeline stages.
 
-- **Production timing:** Run `mojo run main.mojo <file>` to see the full output and profiler report.
-- **Micro-benchmarking:** Run `mojo run benchmark.mojo <file>` for a more streamlined measurement focused on the parallel pipeline throughput.
-- **Deep Analysis:** Run `mojo run analyze.mojo <file>` for hash collision and per-thread skew metrics.
+- **Production timing:** Run `mojo run src/main.mojo <file>` to see the full output and profiler report.
+- **Performance & Analysis:** Run `mojo run src/perf.mojo <file>` for throughput (benchmark mode).
+- **Deep Analysis:** Run `mojo run src/perf.mojo <file> --analyze` for hash collision and parser metrics.
 
 ```bash
-# Run benchmark with specific file
-mojo run benchmark.mojo measurements_300m.txt
+# Run benchmark
+mojo run src/perf.mojo measurements_300m.txt
+
+# Run deep analysis
+mojo run src/perf.mojo measurements_300m.txt --analyze
 ```
 
 ## 1. Hash Table Architecture (Deep Dive)
@@ -61,15 +64,16 @@ Data is processed using `std.algorithm.parallelize`, scaling linearly with `num_
 
 ## 3. Parsing & Computation
 
-### A. SIMD Row Scanning
-The inner loop of `parse_chunk` uses SIMD (Single Instruction, Multiple Data) to scan for newlines.
-- **Mechanism:** It loads a `simd_width_of[uint8]` (e.g., 32 or 64 bytes) window into a SIMD vector and compares it against a vector of newlines in a single CPU cycle using `chunk.eq(nl_vec)`.
-- **Optimization:** This eliminates per-character branches and allows the CPU to find multiple rows in one operation.
+### A. SIMD Row Scanning (with LLVM Intrinsics)
+The inner loop of `parse_chunk` uses SIMD (Single Instruction, Multiple Data) to scan for newlines in 16-byte chunks.
+- **Mechanism:** It loads a 16-byte window into a SIMD vector and compares it against a vector of newlines using `chunk.eq(nl_vec)`. The boolean mask is cast to a `UInt8` vector, multiplied by powers of 2, and reduced into a single 16-bit scalar integer bitmask.
+- **Hardware Acceleration:** To avoid unrolling loops and branching when processing the bitmask, we directly invoke the LLVM backend intrinsic `llvm.cttz.i16`. This provides a 1-cycle hardware count of trailing zeros to instantly locate the exact offset of the next newline within the 16-byte window, skipping cleanly from newline to newline.
 
-### B. Branchless Temperature Parsing
-Temperature parsing is done **backwards** from the newline to the semicolon.
-- **Algorithm:** Since the format is fixed-width decimal (e.g., `12.3` or `-1.2`), we can parse the digits relative to the decimal point without any conditional branches.
-- **Logic:** We use bitwise masks (`c4 & 0x0F`) and boolean-to-integer conversions to handle the optional sign and optional tens digit. This keeps the CPU's pipeline full and avoids branch misprediction penalties.
+### B. Branchless Temperature Parsing (8-Byte Load)
+Temperature parsing is done **backwards** from the calculated newline offset.
+- **Mechanism:** Once the newline is found, the parser performs a single unaligned 8-byte load backwards from the newline using `(ptr + offset).bitcast[UInt64]().load()`.
+- **Optimization:** Instead of loading individual character bytes sequentially, which forces multiple memory accesses, the 8-byte load pulls the entire temperature string and the trailing semicolon directly into a single CPU register. We extract the fraction, units, and structural bytes using bitwise shifts (e.g., `(chunk8 >> 56) & 0xFF`), completely eliminating per-byte loads and memory latency from the critical path.
+- **Logic:** We use bitwise arithmetic to handle the optional sign and optional tens digit without conditionals. This keeps the CPU's pipeline full and avoids branch misprediction penalties.
 
 ---
 
@@ -96,3 +100,18 @@ To maintain maximum throughput (~340 M rows/s), we use direct `UnsafePointer` in
 While avoided in the hot path, Mojo's advanced memory management provides benefits in the merge and formatting stages.
 - **Read References:** In `update_from_stats`, we use the `read` convention (`read incoming: StationStats`). This ensures the 32-byte statistics struct is passed by reference, avoiding stack copies during the thread-merge phase.
 - **Ref Bindings:** In `merge_from` and `print_sorted`, we use `ref` bindings to access map entries. Since these functions are not called per-row, the safety and readability benefits of `ref` outweigh any negligible overhead.
+
+---
+
+## 6. Hardware Portability & Scaling
+
+The codebase is built specifically to seamlessly scale horizontally on larger machines (e.g., MacBook Pro M3 Max/M4 Max) without needing source code modifications:
+
+### A. Dynamic Core Allocation
+In `src/perf.mojo`, thread allocation is completely dynamic via `num_logical_cores()`. The chunk offsets are dynamically sliced, meaning a 12-core or 16-core CPU will automatically divide the file perfectly without hardcoded thread counts.
+
+### B. Universal ARM NEON SIMD Width
+In `src/parser.mojo`, we hardcode `comptime width = 16`. This matches the 128-bit NEON vector width that is universally identical across all Apple Silicon processors (M1 through M4). This guarantees optimal vectorization without any "out of bounds" hardware faults.
+
+### C. Ahead-Of-Time (AOT) Host Targeting
+When moving this code to a new computer, **you must re-run `build.sh` on the target machine**. The Mojo compiler uses the host architecture by default (similar to Clang's `-march=native`), baking in the exact L2/L3 cache line sizes, vector extensions, and pipeline definitions for that specific M-series chip. Do not copy the compiled `bin/perf_bin` between different computers.

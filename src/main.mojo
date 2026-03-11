@@ -2,7 +2,7 @@
 from std.sys import argv
 from std.sys.info import num_logical_cores
 from perfect_hashmap import PerfectStationMap
-from parser import parse_chunk
+from parser import parse_chunk, ParserMetrics
 from mmap import MappedFile
 from std.algorithm import parallelize
 
@@ -22,9 +22,6 @@ fn main() raises:
     var mapped = MappedFile(filename)
     var ptr = mapped.ptr
     var size = mapped.size
-    prof.toc("I/O Setup (mmap)")
-
-    # var num_threads = num_logical_cores()
     comptime num_threads = 8
     var chunk_size = size // num_threads
 
@@ -62,7 +59,8 @@ fn main() raises:
         var chunk_len = end - start
 
         var maps_ptr = maps.unsafe_ptr()
-        parse_chunk(maps_ptr[tid], chunk_ptr, chunk_len)
+        var metrics = ParserMetrics()
+        parse_chunk(maps_ptr[tid], chunk_ptr, chunk_len, metrics)
 
     parallelize[process_chunk](num_threads)
     prof.toc("Parallel Parse")
