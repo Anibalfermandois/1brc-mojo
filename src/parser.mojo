@@ -10,19 +10,19 @@ struct ParserMetrics(Copyable, Movable):
     var rows_simd: Int
     var rows_tail: Int
 
-    fn __init__(out self):
+    def __init__(out self):
         self.simd_iterations = 0
         self.simd_hits = 0
         self.rows_simd = 0
         self.rows_tail = 0
 
-    fn __copyinit__(out self, copy: Self):
+    def __init__(out self, *, copy: Self):
         self.simd_iterations = copy.simd_iterations
         self.simd_hits = copy.simd_hits
         self.rows_simd = copy.rows_simd
         self.rows_tail = copy.rows_tail
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __init__(out self, *, deinit take: Self):
         self.simd_iterations = take.simd_iterations
         self.simd_hits = take.simd_hits
         self.rows_simd = take.rows_simd
@@ -36,7 +36,7 @@ comptime ASCII_DASH = 45
 
 
 @always_inline
-fn parse_row[
+def parse_row[
     TRACK_METRICS: Bool = False
 ](
     mut map: PerfectStationMap[TRACK_METRICS=TRACK_METRICS],
@@ -45,35 +45,22 @@ fn parse_row[
     nl: Int,
 ) -> None:
     """Parse a single row [name_start, nl) and insert into the map."""
-    # Clean out \r if present (Windows line endings)
-    var end_idx = nl
-    if ptr[nl - 1] == ASCII_CR:
-        end_idx = nl - 1
-
-    # --- Parse temperature backwards ---
-    # Format is: [-]?[0-9][0-9]?\.[0-9]
-    var c_frac: Int
-    var c_units: Int
-    var c4: Int
-    var c5: Int
-
-    if end_idx >= 8:
-        var chunk8 = (ptr + (end_idx - 8)).bitcast[UInt64]().load()
-        c_frac = Int((chunk8 >> 56) & 0xFF) - 48
-        c_units = Int((chunk8 >> 40) & 0xFF) - 48
-        c4 = Int((chunk8 >> 32) & 0xFF)
-        c5 = Int((chunk8 >> 24) & 0xFF)
-    else:
-        c_frac = Int(ptr[end_idx - 1]) - 48
-        c_units = Int(ptr[end_idx - 3]) - 48
-        c4 = Int(ptr[end_idx - 4])
-        c5 = Int(ptr[end_idx - 5])
+    # --- Parse temperature backwards via a single 8-byte load ---
+    # Assumes Unix line endings (no \r) and nl >= 8 (safe for all valid
+    # 1BRC rows: min row is "abc;9.9\n" = 8 bytes, so nl >= name_start+7,
+    # and name_start >= 1 for all rows except possibly the first in the file).
+    # Format: [-]?[0-9][0-9]?\.[0-9]
+    var chunk8  = (ptr + (nl - 8)).bitcast[UInt64]().load()
+    var c_frac  = Int((chunk8 >> 56) & 0xFF) - 48  # ptr[nl-1]: fractional digit
+    var c_units = Int((chunk8 >> 40) & 0xFF) - 48  # ptr[nl-3]: units digit
+    var c4      = Int((chunk8 >> 32) & 0xFF)        # ptr[nl-4]: tens | '-' | ';'
+    var c5      = Int((chunk8 >> 24) & 0xFF)        # ptr[nl-5]: '-' | ';' | name
 
     # Branchless length calculation
     var c5_is_semi = Int(c5 == ASCII_SEMI)
     var c4_is_semi = Int(c4 == ASCII_SEMI)
     var offset = 6 - c5_is_semi - (c4_is_semi * 2)
-    var name_len = end_idx - offset - name_start
+    var name_len = nl - offset - name_start
 
     # Branchless value calculation
     var c4_val = c4 & 0x0F
@@ -89,7 +76,7 @@ fn parse_row[
     map.update_or_insert(ptr + name_start, name_len, temp_val)
 
 
-fn parse_chunk[
+def parse_chunk[
     TRACK_METRICS: Bool = False
 ](
     mut map: PerfectStationMap[TRACK_METRICS=TRACK_METRICS],
@@ -98,7 +85,10 @@ fn parse_chunk[
     mut metrics: ParserMetrics,
 ):
     comptime width = 16
-    var nl_vec = SIMD[DType.uint8, width](ASCII_LF)
+    # Compile-time constants: baked into the binary as immediates, never
+    # re-initialized at runtime regardless of loop iteration count.
+    comptime nl_vec = SIMD[DType.uint8, width](ASCII_LF)
+
     var i = 0
     var row_start = 0
 
@@ -108,23 +98,17 @@ fn parse_chunk[
     while i + width <= size:
         comptime if TRACK_METRICS:
             metrics.simd_iterations += 1
-            
+
         var chunk = ptr.load[width=width](i)
         var mask = chunk.eq(nl_vec)  # SIMD[DType.bool, width]
 
         if mask.reduce_or():
             comptime if TRACK_METRICS:
                 metrics.simd_hits += 1
-                
             comptime if width == 16:
-                var powers = SIMD[DType.uint8, 16](1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128)
-                var mask_u8 = mask.cast[DType.uint8]()
-                var weighted = mask_u8 * powers
-                var low = Int(weighted.slice[8, offset=0]().reduce_add())
-                var high = Int(weighted.slice[8, offset=8]().reduce_add())
-                
-                var final_mask = low | (high << 8)
-                
+                comptime u16_powers = SIMD[DType.uint16, 16](1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768)
+                var final_mask = Int((mask.cast[DType.uint16]() * u16_powers).reduce_add())
+
                 while final_mask != 0:
                     var bit_idx = Int(llvm_intrinsic["llvm.cttz.i16", Int16](Int16(final_mask), False))
                     var nl = i + bit_idx

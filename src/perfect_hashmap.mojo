@@ -8,26 +8,26 @@ struct StationStats(Copyable, ImplicitlyCopyable, Movable):
     var sum: Int
     var count: Int
 
-    fn __init__(out self, initial_temp: Int):
+    def __init__(out self, initial_temp: Int):
         self.min = initial_temp
         self.max = initial_temp
         self.sum = initial_temp
         self.count = 1
 
-    fn __copyinit__(out self, copy: Self):
+    def __init__(out self, *, copy: Self):
         self.min = copy.min
         self.max = copy.max
         self.sum = copy.sum
         self.count = copy.count
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __init__(out self, *, deinit take: Self):
         self.min = take.min
         self.max = take.max
         self.sum = take.sum
         self.count = take.count
 
     @always_inline
-    fn update(mut self, temp: Int):
+    def update(mut self, temp: Int):
         if temp < self.min:
             self.min = temp
         if temp > self.max:
@@ -35,7 +35,7 @@ struct StationStats(Copyable, ImplicitlyCopyable, Movable):
         self.sum += temp
         self.count += 1
 
-    fn mean(self) -> Float64:
+    def mean(self) -> Float64:
         if self.count == 0:
             return 0.0
         return Float64(self.sum) / (Float64(self.count) * 10.0)
@@ -46,13 +46,13 @@ struct MapEntry(Copyable, ImplicitlyCopyable, Movable):
     var ptr: UnsafePointer[UInt8, MutExternalOrigin]
     var length: Int
 
-    fn __init__(out self):
+    def __init__(out self):
         self.stats = StationStats(0)
         self.stats.count = 0
         self.ptr = UnsafePointer[UInt8, MutExternalOrigin]()
         self.length = 0
 
-    fn __init__(
+    def __init__(
         out self,
         stats: StationStats,
         ptr: UnsafePointer[UInt8, MutExternalOrigin],
@@ -72,21 +72,21 @@ struct MapMetrics(Copyable, ImplicitlyCopyable, Movable):
     var total_probes: Int
     var max_probe_run: Int
 
-    fn __init__(out self):
+    def __init__(out self):
         self.total_lookups = 0
         self.total_inserts = 0
         self.total_updates = 0
         self.total_probes = 0
         self.max_probe_run = 0
 
-    fn __copyinit__(out self, copy: Self):
+    def __init__(out self, *, copy: Self):
         self.total_lookups = copy.total_lookups
         self.total_inserts = copy.total_inserts
         self.total_updates = copy.total_updates
         self.total_probes = copy.total_probes
         self.max_probe_run = copy.max_probe_run
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __init__(out self, *, deinit take: Self):
         self.total_lookups = take.total_lookups
         self.total_inserts = take.total_inserts
         self.total_updates = take.total_updates
@@ -105,7 +105,7 @@ struct PerfectStationMap[
     var size: Int
     var metrics: MapMetrics
 
-    fn __init__(out self):
+    def __init__(out self):
         self.data = alloc[MapEntry](Self.CAPACITY)
         self.size = 0
         self.metrics = MapMetrics()
@@ -113,20 +113,20 @@ struct PerfectStationMap[
         for i in range(Self.CAPACITY):
             self.data[i] = MapEntry()
 
-    fn __copyinit__(out self, copy: Self):
+    def __init__(out self, *, copy: Self):
         self.data = alloc[MapEntry](Self.CAPACITY)
         for i in range(Self.CAPACITY):
             self.data[i] = copy.data[i]
         self.size = copy.size
         self.metrics = copy.metrics
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __init__(out self, *, deinit take: Self):
         self.data = take.data
         self.size = take.size
         self.metrics = take.metrics^
 
     @always_inline
-    fn update_or_insert(
+    def update_or_insert(
         mut self,
         ptr: UnsafePointer[UInt8, MutExternalOrigin],
         length: Int,
@@ -143,7 +143,8 @@ struct PerfectStationMap[
         k |= UInt64(ptr[1]) << 32
         k |= UInt64(ptr[length - 2]) << 40
 
-        var idx = Int((k * Self.MULTIPLIER) >> UInt64(Self.SHIFT))
+        comptime SHIFT_U64 = UInt64(Self.SHIFT)
+        var idx = Int((k * Self.MULTIPLIER) >> SHIFT_U64)
 
         if self.data[idx].stats.count > 0:
             comptime if Self.TRACK_METRICS:
@@ -169,7 +170,7 @@ struct PerfectStationMap[
             comptime if Self.TRACK_METRICS:
                 self.metrics.total_inserts += 1
 
-    fn update_from_stats(
+    def update_from_stats(
         mut self,
         ptr: UnsafePointer[UInt8, MutExternalOrigin],
         length: Int,
@@ -182,7 +183,8 @@ struct PerfectStationMap[
         k |= UInt64(ptr[1]) << 32
         k |= UInt64(ptr[length - 2]) << 40
 
-        var idx = Int((k * Self.MULTIPLIER) >> UInt64(Self.SHIFT))
+        comptime SHIFT_U64 = UInt64(Self.SHIFT)
+        var idx = Int((k * Self.MULTIPLIER) >> SHIFT_U64)
 
         if self.data[idx].stats.count > 0:
             comptime if Self.TRACK_METRICS:
@@ -209,13 +211,13 @@ struct PerfectStationMap[
             self.data[idx] = MapEntry(incoming, ptr, length)
             self.size += 1
 
-    fn merge_from(mut self, other: Self):
+    def merge_from(mut self, other: Self):
         for i in range(Self.CAPACITY):
             ref entry = other.data[i]
             if entry.stats.count > 0:
                 self.update_from_stats(entry.ptr, entry.length, entry.stats)
 
-    fn print_sorted(self):
+    def print_sorted(self):
         var sorted_keys = List[String](capacity=self.size)
         var slot_indices = List[Int](capacity=self.size)
 

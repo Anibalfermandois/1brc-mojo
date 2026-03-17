@@ -8,19 +8,19 @@ struct Profiler:
     var _order: List[String]
     var _total_start: Int
 
-    fn __init__(out self):
+    def __init__(out self):
         self._starts = Dict[String, Int]()
         self._totals = Dict[String, Int]()
         self._order = List[String]()
         self._total_start = Int(perf_counter_ns())
 
-    fn tic(mut self, name: String):
+    def tic(mut self, name: String):
         self._starts[name] = Int(perf_counter_ns())
         if name not in self._totals:
             self._totals[name] = 0
             self._order.append(name)
 
-    fn toc(mut self, name: String):
+    def toc(mut self, name: String):
         var end = Int(perf_counter_ns())
         try:
             if name in self._starts:
@@ -29,7 +29,7 @@ struct Profiler:
         except:
             pass
 
-    fn report(self) raises:
+    def report(self) raises:
         var total_end = Int(perf_counter_ns())
         var wall_time_ns = total_end - self._total_start
         var wall_time_ms = Float64(wall_time_ns) / 1_000_000.0
@@ -62,19 +62,19 @@ struct Profiler:
         )
         print("=" * 60 + "\n")
 
-    fn _pad_right(self, s: String, width: Int) -> String:
+    def _pad_right(self, s: String, width: Int) -> String:
         var out = s
         while len(out) < width:
             out += " "
         return out
 
-    fn _pad_left(self, s: String, width: Int) -> String:
+    def _pad_left(self, s: String, width: Int) -> String:
         var out = s
         while len(out) < width:
             out = " " + out
         return out
 
-    fn _fmt_float(self, v: Float64) -> String:
+    def _fmt_float(self, v: Float64) -> String:
         var i = Int(v)
         var frac = Int((v - Float64(i)) * 100.0)
         if frac < 0:

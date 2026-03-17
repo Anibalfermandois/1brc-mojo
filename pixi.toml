@@ -1,0 +1,16 @@
+[workspace]
+name = "1brc"
+version = "0.1.0"
+description = "1 Billion Row Challenge in Mojo"
+channels = ["https://conda.modular.com/max-nightly", "conda-forge"]
+platforms = ["osx-arm64"]
+
+[dependencies]
+max = ">=26.1.0.dev0,<27"
+
+[tasks]
+build = { cmd = "entrypoints/build.sh", description = "Build perf_bin with -O3" }
+bench = { cmd = "entrypoints/bench.sh", description = "Run benchmark (warm cache)" }
+bench-300m = { cmd = "entrypoints/bench.sh measurements_300m.txt 5", description = "Bench 300m file, 5 runs" }
+bench-600m = { cmd = "entrypoints/bench.sh measurements_600m.txt 5", description = "Bench 600m file, 5 runs" }
+bench-1b = { cmd = "entrypoints/bench.sh measurements_1b.txt 5", description = "Bench 1b file, 5 runs" }

@@ -41,7 +41,7 @@ struct MappedFile:
     var size: Int
     var _fd: Int32
 
-    fn __init__(out self, path: String) raises:
+    def __init__(out self, path: String) raises:
         # Get file size via stat (available in os.fstat)
         var st = stat(path)
         self.size = Int(st.st_size)
@@ -78,14 +78,14 @@ struct MappedFile:
 
         self.ptr = raw
 
-    fn advise(self, advice: Int32):
+    def advise(self, advice: Int32):
         """Advise the kernel about the intended memory access pattern."""
         if self.size > 0 and Int(self.ptr) != 0:
             _ = external_call["madvise", Int32](
                 self.ptr.bitcast[NoneType](), self.size, advice
             )
 
-    fn close(mut self):
+    def close(mut self):
         """Unmap and close the file descriptor. Always call this."""
         if self.size > 0 and Int(self.ptr) != 0:
             _ = external_call["munmap", Int32](
@@ -95,3 +95,15 @@ struct MappedFile:
         if self._fd >= 0:
             _ = external_call["close", Int32](self._fd)
             self._fd = -1
+
+
+def madvise_range(
+    ptr: UnsafePointer[UInt8, MutExternalOrigin], length: Int, advice: Int32
+):
+    """Advise the kernel about a specific sub-range of a mapped region.
+    Call with MADV_DONTNEED after a thread finishes its chunk to release
+    physical pages back to the OS, freeing RAM for upcoming chunks."""
+    if length > 0:
+        _ = external_call["madvise", Int32](
+            ptr.bitcast[NoneType](), length, advice
+        )
