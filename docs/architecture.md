@@ -65,7 +65,7 @@ We use a custom `Profiler` (in `src/profiler.mojo`) to measure the performance o
 
 | Dataset | File size | System Median (Wall-clock) | Engine Peak (Parse Stage) | Note |
 |---|---|---|---|---|
-| **100m** | 1.3 GB | ~209ms | **691 M rows/s** | Fully cached in RAM |
+| **100m** | 1.3 GB | ~209ms | **721 M rows/s** | Fully cached in RAM |
 | **300m** | 3.9 GB | ~724ms | **476 M rows/s** | Fully cached in RAM |
 | **600m** | 7.7 GB | ~10070ms | **72 M rows/s** | I/O (SSD) Bound |
 | **1b** | 13.0 GB | N/A | Variable | Streaming mode (`MADV_SEQUENTIAL`) |
@@ -106,8 +106,8 @@ Data is processed using `std.algorithm.parallelize`, scaling linearly with `num_
 
 ## 2. Hot Path Optimizations
 
-### A. SIMD Row Scanning (with LLVM Intrinsics)
-The inner loop of `parse_chunk` uses 16-byte SIMD windows and the `llvm.cttz.i16` hardware intrinsic to locate newlines in 1 cycle. This is the primary driver for our high **Engine Peak** performance.
+### A. SIMD Row Scanning (with `std.bit`)
+The inner loop of `parse_chunk` uses 16-byte SIMD windows and the `count_trailing_zeros` hardware-accelerated function (from `std.bit`) to locate newlines in 1 cycle. This replaced the raw `llvm.cttz.i16` intrinsic, maintaining the high **Engine Peak** performance. (maybe noice)
 
 ### B. Branchless Temperature Parsing (8-Byte Load)
 Once a newline is found, the parser performs a single unaligned 8-byte load backwards. Bitwise arithmetic replaces conditionals for handling the sign and decimal point, keeping the instruction pipeline full.
@@ -175,6 +175,11 @@ Documented to prevent re-implementation.
 
 #### A.7 Removing the `reduce_or()` Guard
 - **Result:** Neutral. SIMD reduction is inexpensive compared to the branch predictor savings.
+
+#### A.8 Semicolon "Has-Zero-Byte" Trick
+- **Idea:** Use bitwise arithmetic (`(diff - 0x01...) & ~diff & 0x80...`) to find the semicolon index in a 64-bit word.
+- **Result:** ~15% regression in **Engine Throughput**.
+- **Reason:** On Apple Silicon (ARM64), the 3-4 instruction overhead of the bitwise trick is more expensive than the simple branchless math used in the baseline.
 
 ### B. GPU Investigation (Metal)
 Can Apple Silicon's unified memory allow a Metal GPU kernel to parse faster?

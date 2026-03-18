@@ -12,7 +12,7 @@ from std.sys import argv
 from std.sys.info import num_logical_cores
 from std.time import perf_counter_ns
 from perfect_hashmap import PerfectStationMap, MapMetrics
-from mmap import MappedFile, MADV_WILLNEED, MADV_SEQUENTIAL, MADV_DONTNEED, madvise_range
+from mmap import MappedFile, MADV_SEQUENTIAL, MADV_WILLNEED, MADV_DONTNEED, madvise_range
 from parser import parse_chunk, ParserMetrics
 from std.algorithm import parallelize
 from profiler import Profiler
@@ -106,11 +106,8 @@ def run_pipeline[TRACK_METRICS: Bool](filename: String) raises:
     var size = mapped.size
 
     # Size-based I/O strategy:
-    #   < 8 GB  → MADV_WILLNEED: bulk-preload into RAM (fast sequential NVMe
-    #             read first, then parse entirely from RAM at full speed).
-    #   ≥ 8 GB  → MADV_SEQUENTIAL: stream pages on demand. Each thread then
-    #             calls MADV_DONTNEED after its chunk to release physical pages,
-    #             preventing RAM thrash on files larger than available RAM (1B=13GB).
+    #   < 8 GB  → MADV_WILLNEED: bulk-preload into RAM (300m fits, runs at CPU speed).
+    #   ≥ 8 GB  → MADV_SEQUENTIAL: stream on demand; threads release pages after each chunk.
     comptime STREAMING_THRESHOLD = 8 * 1024 * 1024 * 1024  # 8 GB
     var use_streaming = size >= STREAMING_THRESHOLD
     if use_streaming:
@@ -158,32 +155,28 @@ def run_pipeline[TRACK_METRICS: Bool](filename: String) raises:
     prof.toc("Map Initialization")
 
     prof.tic("Parallel Parse")
-
     @parameter
     fn process_chunk[STREAMING: Bool](tid: Int):
-        var start = chunk_starts[tid]
-        var end = chunk_starts[tid + 1]
-        var chunk_ptr = ptr + start
-        var chunk_len = end - start
+        var start      = chunk_starts[tid]
+        var end        = chunk_starts[tid + 1]
+        var chunk_ptr  = ptr + start
+        var chunk_len  = end - start
 
-        var maps_ptr = maps.unsafe_ptr()
+        var maps_ptr       = maps.unsafe_ptr()
         var parser_metrics = ParserMetrics()
 
         var t0 = perf_counter_ns()
         parse_chunk[TRACK_METRICS](maps_ptr[tid], chunk_ptr, chunk_len, parser_metrics)
         var t1 = perf_counter_ns()
 
-        # For files > RAM: release processed pages so the OS can page in
-        # upcoming chunks without thrashing. Not needed for small files
-        # (WILLNEED already loaded them into RAM, DONTNEED would evict them).
         comptime if STREAMING:
             madvise_range(chunk_ptr, chunk_len, MADV_DONTNEED)
 
         var res_ptr = results.unsafe_ptr()
-        res_ptr[tid].tid = tid
+        res_ptr[tid].tid        = tid
         res_ptr[tid].elapsed_ns = Int(t1 - t0)
         comptime if TRACK_METRICS:
-            res_ptr[tid].metrics = maps_ptr[tid].metrics.copy()
+            res_ptr[tid].metrics        = maps_ptr[tid].metrics.copy()
             res_ptr[tid].parser_metrics = parser_metrics.copy()
 
     if use_streaming:

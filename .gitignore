@@ -12,3 +12,4 @@ wheels/
 # Measurements and large data
 measurements_*.txt
 bin/
+tmp/

@@ -1,7 +1,7 @@
 from std.memory import UnsafePointer
-from std.sys.info import simd_width_of  # renamed from simdwidthof in Mojo 0.26
+from std.sys.info import simd_width_of
+from std.bit import count_trailing_zeros
 from perfect_hashmap import PerfectStationMap
-from std.sys.intrinsics import llvm_intrinsic
 
 @fieldwise_init
 struct ParserMetrics(Copyable, Movable):
@@ -100,7 +100,7 @@ def parse_chunk[
             metrics.simd_iterations += 1
 
         var chunk = ptr.load[width=width](i)
-        var mask = chunk.eq(nl_vec)  # SIMD[DType.bool, width]
+        var mask: SIMD[DType.bool, width] = chunk.eq(nl_vec)
 
         if mask.reduce_or():
             comptime if TRACK_METRICS:
@@ -110,7 +110,7 @@ def parse_chunk[
                 var final_mask = Int((mask.cast[DType.uint16]() * u16_powers).reduce_add())
 
                 while final_mask != 0:
-                    var bit_idx = Int(llvm_intrinsic["llvm.cttz.i16", Int16](Int16(final_mask), False))
+                    var bit_idx = Int(count_trailing_zeros(final_mask))
                     var nl = i + bit_idx
                     parse_row[TRACK_METRICS](map, ptr, row_start, nl)
                     row_start = nl + 1

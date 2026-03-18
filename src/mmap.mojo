@@ -23,6 +23,7 @@ from std.os.fstat import stat
 
 comptime O_RDONLY: Int32 = 0
 comptime PROT_READ: Int32 = 1
+comptime MAP_SHARED: Int32 = 1
 comptime MAP_PRIVATE: Int32 = 2
 comptime MAP_FAILED_SENTINEL: Int = -1  # mmap returns (void*)-1 on failure
 
@@ -42,33 +43,27 @@ struct MappedFile:
     var _fd: Int32
 
     def __init__(out self, path: String) raises:
-        # Get file size via stat (available in os.fstat)
         var st = stat(path)
         self.size = Int(st.st_size)
 
-        # open(2) - must match stdlib's registered signature: (pointer, si32, si32) -> si32
-        # Ensure path is null-terminated for C
         var null_terminated_path = path + "\0"
         self._fd = external_call["open", Int32](
             null_terminated_path.unsafe_ptr().bitcast[NoneType](),
             Int32(O_RDONLY),
-            Int32(0),  # mode
+            Int32(0),
         )
         if self._fd < 0:
             raise Error("mmap: open() failed for: " + path)
 
-        # mmap(2)  — addr=NULL, prot=PROT_READ, flags=MAP_SHARED, offset=0
         var raw = external_call[
             "mmap", UnsafePointer[UInt8, MutExternalOrigin]
         ](
-            UnsafePointer[
-                UInt8, MutExternalOrigin
-            ](),  # addr  = NULL  (kernel chooses)
-            self.size,  # length
-            PROT_READ,  # prot
-            MAP_PRIVATE,  # flags
-            self._fd,  # fd
-            Int64(0),  # offset
+            UnsafePointer[UInt8, MutExternalOrigin](),  # addr = NULL
+            self.size,
+            PROT_READ,
+            MAP_SHARED,
+            self._fd,
+            Int64(0),
         )
 
         # mmap returns MAP_FAILED = (void*)-1 on error
