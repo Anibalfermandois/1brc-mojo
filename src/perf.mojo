@@ -11,9 +11,9 @@ metric tracking with minimal overhead. Otherwise, it runs at full speed.
 from std.sys import argv
 from std.sys.info import num_logical_cores
 from std.time import perf_counter_ns
-from perfect_hashmap import PerfectStationMap, MapMetrics
+from perfect_hashmap import PerfectStationMap, MapMetrics, EmptyMapMetrics, MapTracker
 from mmap import MappedFile, MADV_SEQUENTIAL, MADV_WILLNEED, MADV_DONTNEED, madvise_range
-from parser import parse_chunk, ParserMetrics
+from parser import parse_chunk, ParserMetrics, EmptyParserMetrics, ParserTracker
 from std.algorithm import parallelize
 from profiler import Profiler
 
@@ -64,36 +64,42 @@ def print_row(cells: List[String], widths: List[Int]):
     print(row)
 
 # ── Per-thread result holder ──────────────────────────────────────────────────
-struct ThreadResult(Copyable, ImplicitlyCopyable, Movable):
+struct ThreadResult[M: MapTracker , P: ParserTracker](Copyable, Movable):
     var tid: Int
     var elapsed_ns: Int
-    var metrics: MapMetrics
-    var parser_metrics: ParserMetrics
+    var metrics: Self.M
+    var parser_metrics: Self.P
+    var map_size: Int
+    var map_capacity: Int
 
     def __init__(out self):
         self.tid = 0
         self.elapsed_ns = 0
-        self.metrics = MapMetrics()
-        self.parser_metrics = ParserMetrics()
+        self.metrics = Self.M()
+        self.parser_metrics = Self.P()
+        self.map_size = 0
+        self.map_capacity = 0
 
     def __init__(out self, *, copy: Self):
         self.tid = copy.tid
         self.elapsed_ns = copy.elapsed_ns
-        self.metrics = copy.metrics.copy()
-        self.parser_metrics = copy.parser_metrics.copy()
+        self.metrics = copy.metrics
+        self.parser_metrics = copy.parser_metrics
+        self.map_size = copy.map_size
+        self.map_capacity = copy.map_capacity
 
     def __init__(out self, *, deinit take: Self):
         self.tid = take.tid
         self.elapsed_ns = take.elapsed_ns
         self.metrics = take.metrics^
         self.parser_metrics = take.parser_metrics^
+        self.map_size = take.map_size
+        self.map_capacity = take.map_capacity
 
 
-def run_pipeline[TRACK_METRICS: Bool](filename: String) raises:
+def run_pipeline[M: MapTracker, P: ParserTracker, TRACK_METRICS: Bool](filename: String) raises:
     var prof = Profiler()
-    var mode_str = "ANALYSIS"
-    comptime if not TRACK_METRICS:
-        mode_str = "BENCHMARK"
+    var mode_str: String = "ANALYSIS" if TRACK_METRICS else "BENCHMARK"
 
     print("=" * 60)
     print("1BRC Unified Tool [Mode: ", mode_str, "] —", filename)
@@ -105,9 +111,6 @@ def run_pipeline[TRACK_METRICS: Bool](filename: String) raises:
     var ptr = mapped.ptr
     var size = mapped.size
 
-    # Size-based I/O strategy:
-    #   < 8 GB  → MADV_WILLNEED: bulk-preload into RAM (300m fits, runs at CPU speed).
-    #   ≥ 8 GB  → MADV_SEQUENTIAL: stream on demand; threads release pages after each chunk.
     comptime STREAMING_THRESHOLD = 8 * 1024 * 1024 * 1024  # 8 GB
     var use_streaming = size >= STREAMING_THRESHOLD
     if use_streaming:
@@ -147,11 +150,11 @@ def run_pipeline[TRACK_METRICS: Bool](filename: String) raises:
     prof.toc("Chunk Boundary Calculation")
 
     prof.tic("Map Initialization")
-    var maps = List[PerfectStationMap[TRACK_METRICS=TRACK_METRICS]](capacity=num_threads)
-    var results = List[ThreadResult](capacity=num_threads)
+    var maps = List[PerfectStationMap[MAP_TRACKER=M]](capacity=num_threads)
+    var results = List[ThreadResult[M, P]](capacity=num_threads)
     for _ in range(num_threads):
-        maps.append(PerfectStationMap[TRACK_METRICS=TRACK_METRICS]())
-        results.append(ThreadResult())
+        maps.append(PerfectStationMap[MAP_TRACKER=M]())
+        results.append(ThreadResult[M, P]())
     prof.toc("Map Initialization")
 
     prof.tic("Parallel Parse")
@@ -163,10 +166,10 @@ def run_pipeline[TRACK_METRICS: Bool](filename: String) raises:
         var chunk_len  = end - start
 
         var maps_ptr       = maps.unsafe_ptr()
-        var parser_metrics = ParserMetrics()
+        var parser_metrics = P()
 
         var t0 = perf_counter_ns()
-        parse_chunk[TRACK_METRICS](maps_ptr[tid], chunk_ptr, chunk_len, parser_metrics)
+        parse_chunk[P, M](maps_ptr[tid], chunk_ptr, chunk_len, parser_metrics)
         var t1 = perf_counter_ns()
 
         comptime if STREAMING:
@@ -175,9 +178,10 @@ def run_pipeline[TRACK_METRICS: Bool](filename: String) raises:
         var res_ptr = results.unsafe_ptr()
         res_ptr[tid].tid        = tid
         res_ptr[tid].elapsed_ns = Int(t1 - t0)
-        comptime if TRACK_METRICS:
-            res_ptr[tid].metrics        = maps_ptr[tid].metrics.copy()
-            res_ptr[tid].parser_metrics = parser_metrics.copy()
+        res_ptr[tid].map_size     = maps_ptr[tid].size
+        res_ptr[tid].map_capacity = maps_ptr[tid].CAPACITY
+        res_ptr[tid].metrics        = maps_ptr[tid].metrics
+        res_ptr[tid].parser_metrics = parser_metrics^
 
     if use_streaming:
         parallelize[process_chunk[True]](num_threads)
@@ -186,7 +190,7 @@ def run_pipeline[TRACK_METRICS: Bool](filename: String) raises:
     prof.toc("Parallel Parse")
 
     prof.tic("Merge Maps")
-    var final_map = PerfectStationMap[TRACK_METRICS=TRACK_METRICS]()
+    var final_map = PerfectStationMap[MAP_TRACKER=M]()
     for i in range(num_threads):
         final_map.merge_from(maps[i])
     prof.toc("Merge Maps")
@@ -219,51 +223,93 @@ def run_pipeline[TRACK_METRICS: Bool](filename: String) raises:
         var agg_simd_hits = 0
         var agg_simd_rows = 0
         var agg_tail_rows = 0
+        var agg_total_name_len = 0
+        var agg_max_name_len = 0
 
         var slowest_ns = 0
         var fastest_ns = Int.MAX
 
         for t in range(num_threads):
-            var r = results.unsafe_ptr()[t]
-            agg_lookups += r.metrics.total_lookups
-            agg_probes += r.metrics.total_probes
-            if r.metrics.max_probe_run > max_chain:
-                max_chain = r.metrics.max_probe_run
+            ref r = results[t]
+            agg_lookups += r.metrics.get_total_lookups()
+            agg_probes += r.metrics.get_total_probes()
+            if r.metrics.get_max_probe_run() > max_chain:
+                max_chain = r.metrics.get_max_probe_run()
 
-            agg_simd_iters += r.parser_metrics.simd_iterations
-            agg_simd_hits += r.parser_metrics.simd_hits
-            agg_simd_rows += r.parser_metrics.rows_simd
-            agg_tail_rows += r.parser_metrics.rows_tail
+            agg_simd_iters += r.parser_metrics.get_simd_iterations()
+            agg_simd_hits += r.parser_metrics.get_simd_hits()
+            agg_simd_rows += r.parser_metrics.get_rows_simd()
+            agg_tail_rows += r.parser_metrics.get_rows_tail()
+            agg_total_name_len += r.parser_metrics.get_total_name_len()
+            if r.parser_metrics.get_max_name_len() > agg_max_name_len:
+                agg_max_name_len = r.parser_metrics.get_max_name_len()
 
             if r.elapsed_ns > slowest_ns: slowest_ns = r.elapsed_ns
             if r.elapsed_ns < fastest_ns: fastest_ns = r.elapsed_ns
 
-        var skew_pct = Float64(slowest_ns - fastest_ns) / Float64(max(slowest_ns, 1)) * 100.0
         var actual_rows = agg_simd_rows + agg_tail_rows
         var actual_tput = Float64(actual_rows) / parse_s / 1_000_000.0
+        var actual_gb_s = Float64(size) / parse_s / (1024 * 1024 * 1024)
 
         print("  Actual Parsed Rows: ", actual_rows)
-        print("  Actual Throughput:  ", fmt_float2(actual_tput), " M rows/s")
+        print("  Throughput:         ", fmt_float2(actual_tput), " M rows/s (", fmt_float2(actual_gb_s), " GB/s)")
+
+        print("\n── I/O Performance ──────────────────────────────────────────────────")
+        var strategy = "MADV_WILLNEED (Preload)"
+        if use_streaming:
+            strategy = "MADV_SEQUENTIAL (Streaming)"
+        print("  Strategy:      ", strategy)
+        print("  Mapped Size:   ", fmt_float2(Float64(size) / (1024*1024*1024)), " GB")
+        print("  Effective I/O: ", fmt_float2(actual_gb_s), " GB/s")
+
         print("\n── Threading Skew ───────────────────────────────────────────────────")
+        var skew_pct = Float64(slowest_ns - fastest_ns) / Float64(max(slowest_ns, 1)) * 100.0
         print("  Fastest thread: ", fmt_float2(Float64(fastest_ns) / 1e6), "ms")
         print("  Slowest thread: ", fmt_float2(Float64(slowest_ns) / 1e6), "ms")
         print("  Thread skew:    ", fmt_float2(skew_pct), "% (0% = perfect)")
 
         print("\n── Parser Metrics (`parse_chunk`) ───────────────────────────────────")
+        print("  Avg Row Length: ", fmt_float2(Float64(size) / max(Float64(actual_rows), 1.0)), " bytes")
+        print("  Avg Name Len:   ", fmt_float2(Float64(agg_total_name_len) / max(Float64(actual_rows), 1.0)), " bytes")
+        print("  Max Name Len:   ", agg_max_name_len, " bytes")
         print("  SIMD Iterations:", agg_simd_iters)
         var hit_pct = Float64(agg_simd_hits) / max(Float64(agg_simd_iters), 1.0) * 100.0
         print("  SIMD Hits:      ", agg_simd_hits, " (", fmt_float2(hit_pct), "% of 16-byte blocks had a newline)")
         print("  Rows via SIMD:  ", agg_simd_rows)
         print("  Rows via Tail:  ", agg_tail_rows)
 
-        print("\n── Perfect Hashmap Collision Verification ───────────────────────────")
-        print("  Total Lookups:  ", agg_lookups)
-        print("  Unique Stations:", final_map.size)
+        print("\n── SIMD Miss Samples (Blocks with no newlines) ──────────────────────")
+        var samples_shown = 0
+        for t in range(num_threads):
+            ref r = results[t]
+            var missed = r.parser_metrics.get_missed_blocks()
+            for i in range(len(missed)):
+                if samples_shown < 5:
+                    print("  Sample ", samples_shown + 1, ": [", missed[i], "]")
+                    samples_shown += 1
+        if samples_shown == 0:
+            print("  (None found - all blocks had newlines)")
+
+        print("\n── Memory Usage (Per-Thread Maps) ───────────────────────────────────")
+        var total_size_agg = 0
+        var total_cap_agg = 0
+        for t in range(num_threads):
+            ref r = results[t]
+            total_size_agg += r.map_size
+            total_cap_agg += r.map_capacity
+            if t < 4 or t == num_threads - 1:
+                var use_pct = Float64(r.map_size) / Float64(r.map_capacity) * 100.0
+                print("  Thread ", t, ": ", r.map_size, " entries / ", r.map_capacity, " cap (", fmt_float2(use_pct), "% used)")
+        
+        var avg_use_pct = Float64(total_size_agg) / Float64(total_cap_agg) * 100.0
+        print("  AVERAGE:  ", fmt_float2(avg_use_pct), "% occupancy")
+
         if agg_probes > 0:
+            print("\n── Perfect Hashmap Collision Verification ───────────────────────────")
+            print("  Total Lookups:  ", agg_lookups)
+            print("  Unique Stations:", final_map.size)
             print("  [!] WARNING: Collisions detected! Total Probes:", agg_probes)
             print("  This means your PerfectStationMap multiplier/shift failed for this dataset.")
-        else:
-            print("  [+] SUCCESS: Zero collisions detected! 100% perfect hash.")
 
     mapped.close()
 
@@ -281,6 +327,6 @@ def main() raises:
         index += 1
 
     if analyze_mode:
-        run_pipeline[True](filename)
+        run_pipeline[MapMetrics, ParserMetrics, True](filename)
     else:
-        run_pipeline[False](filename)
+        run_pipeline[EmptyMapMetrics, EmptyParserMetrics, False](filename)

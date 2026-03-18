@@ -1,5 +1,71 @@
 from std.memory import UnsafePointer, alloc
 
+trait MapTracker(Copyable, ImplicitlyCopyable, Movable):
+    comptime ACTIVE: Bool
+    def __init__(out self): ...
+    def record_lookup(mut self): ...
+    def record_insert(mut self): ...
+    def record_update(mut self): ...
+    def record_probe(mut self): ...
+    def record_max_probe(mut self, run: Int): ...
+    def get_total_lookups(self) -> Int: ...
+    def get_total_inserts(self) -> Int: ...
+    def get_total_updates(self) -> Int: ...
+    def get_total_probes(self) -> Int: ...
+    def get_max_probe_run(self) -> Int: ...
+
+struct MapMetrics(MapTracker, Copyable, ImplicitlyCopyable, Movable):
+    comptime ACTIVE = True
+    var total_lookups: Int
+    var total_inserts: Int
+    var total_updates: Int
+    var total_probes: Int
+    var max_probe_run: Int
+
+    def __init__(out self):
+        self.total_lookups = 0
+        self.total_inserts = 0
+        self.total_updates = 0
+        self.total_probes = 0
+        self.max_probe_run = 0
+
+    @always_inline
+    def record_lookup(mut self): self.total_lookups += 1
+    @always_inline
+    def record_insert(mut self): self.total_inserts += 1
+    @always_inline
+    def record_update(mut self): self.total_updates += 1
+    @always_inline
+    def record_probe(mut self): self.total_probes += 1
+    @always_inline
+    def record_max_probe(mut self, run: Int):
+        if run > self.max_probe_run: self.max_probe_run = run
+
+    def get_total_lookups(self) -> Int: return self.total_lookups
+    def get_total_inserts(self) -> Int: return self.total_inserts
+    def get_total_updates(self) -> Int: return self.total_updates
+    def get_total_probes(self) -> Int: return self.total_probes
+    def get_max_probe_run(self) -> Int: return self.max_probe_run
+
+struct EmptyMapMetrics(MapTracker, Copyable, ImplicitlyCopyable, Movable):
+    comptime ACTIVE = False
+    def __init__(out self): pass
+    @always_inline
+    def record_lookup(mut self): pass
+    @always_inline
+    def record_insert(mut self): pass
+    @always_inline
+    def record_update(mut self): pass
+    @always_inline
+    def record_probe(mut self): pass
+    @always_inline
+    def record_max_probe(mut self, run: Int): pass
+    def get_total_lookups(self) -> Int: return 0
+    def get_total_inserts(self) -> Int: return 0
+    def get_total_updates(self) -> Int: return 0
+    def get_total_probes(self) -> Int: return 0
+    def get_max_probe_run(self) -> Int: return 0
+
 
 @fieldwise_init
 struct StationStats(Copyable, ImplicitlyCopyable, Movable):
@@ -63,52 +129,20 @@ struct MapEntry(Copyable, ImplicitlyCopyable, Movable):
         self.length = length
 
 
-# Optional metrics for analyze.mojo tracking
-@fieldwise_init
-struct MapMetrics(Copyable, ImplicitlyCopyable, Movable):
-    var total_lookups: Int
-    var total_inserts: Int
-    var total_updates: Int
-    var total_probes: Int
-    var max_probe_run: Int
-
-    def __init__(out self):
-        self.total_lookups = 0
-        self.total_inserts = 0
-        self.total_updates = 0
-        self.total_probes = 0
-        self.max_probe_run = 0
-
-    def __init__(out self, *, copy: Self):
-        self.total_lookups = copy.total_lookups
-        self.total_inserts = copy.total_inserts
-        self.total_updates = copy.total_updates
-        self.total_probes = copy.total_probes
-        self.max_probe_run = copy.max_probe_run
-
-    def __init__(out self, *, deinit take: Self):
-        self.total_lookups = take.total_lookups
-        self.total_inserts = take.total_inserts
-        self.total_updates = take.total_updates
-        self.total_probes = take.total_probes
-        self.max_probe_run = take.max_probe_run
-
-
-@fieldwise_init
 struct PerfectStationMap[
     CAPACITY: Int = 16384,
     MULTIPLIER: UInt64 = 11164934581231786391,
     SHIFT: Int = 50,
-    TRACK_METRICS: Bool = False,
+    MAP_TRACKER: MapTracker = EmptyMapMetrics,
 ](Copyable, Movable):
     var data: UnsafePointer[MapEntry, MutExternalOrigin]
     var size: Int
-    var metrics: MapMetrics
+    var metrics: Self.MAP_TRACKER
 
     def __init__(out self):
         self.data = alloc[MapEntry](Self.CAPACITY)
         self.size = 0
-        self.metrics = MapMetrics()
+        self.metrics = Self.MAP_TRACKER()
 
         for i in range(Self.CAPACITY):
             self.data[i] = MapEntry()
@@ -132,8 +166,8 @@ struct PerfectStationMap[
         length: Int,
         temp: Int,
     ):
-        comptime if Self.TRACK_METRICS:
-            self.metrics.total_lookups += 1
+        comptime if Self.MAP_TRACKER.ACTIVE:
+            self.metrics.record_lookup()
 
         # BRANCHLESS property extraction!
         var k = UInt64(length)
@@ -147,11 +181,11 @@ struct PerfectStationMap[
         var idx = Int((k * Self.MULTIPLIER) >> SHIFT_U64)
 
         if self.data[idx].stats.count > 0:
-            comptime if Self.TRACK_METRICS:
+            comptime if Self.MAP_TRACKER.ACTIVE:
                 var existing_ptr = self.data[idx].ptr
                 var existing_len = self.data[idx].length
                 if existing_len != length:
-                    self.metrics.total_probes += 1
+                    self.metrics.record_probe()
                 else:
                     var is_match = True
                     for i in range(length):
@@ -159,16 +193,16 @@ struct PerfectStationMap[
                             is_match = False
                             break
                     if not is_match:
-                        self.metrics.total_probes += 1
+                        self.metrics.record_probe()
 
             self.data[idx].stats.update(temp)
-            comptime if Self.TRACK_METRICS:
-                self.metrics.total_updates += 1
+            comptime if Self.MAP_TRACKER.ACTIVE:
+                self.metrics.record_update()
         else:
             self.data[idx] = MapEntry(StationStats(temp), ptr, length)
             self.size += 1
-            comptime if Self.TRACK_METRICS:
-                self.metrics.total_inserts += 1
+            comptime if Self.MAP_TRACKER.ACTIVE:
+                self.metrics.record_insert()
 
     def update_from_stats(
         mut self,
@@ -187,11 +221,11 @@ struct PerfectStationMap[
         var idx = Int((k * Self.MULTIPLIER) >> SHIFT_U64)
 
         if self.data[idx].stats.count > 0:
-            comptime if Self.TRACK_METRICS:
+            comptime if Self.MAP_TRACKER.ACTIVE:
                 var existing_ptr = self.data[idx].ptr
                 var existing_len = self.data[idx].length
                 if existing_len != length:
-                    self.metrics.total_probes += 1
+                    self.metrics.record_probe()
                 else:
                     var is_match = True
                     for i in range(length):
@@ -199,7 +233,7 @@ struct PerfectStationMap[
                             is_match = False
                             break
                     if not is_match:
-                        self.metrics.total_probes += 1
+                        self.metrics.record_probe()
 
             if incoming.min < self.data[idx].stats.min:
                 self.data[idx].stats.min = incoming.min
@@ -224,8 +258,6 @@ struct PerfectStationMap[
         for i in range(Self.CAPACITY):
             if self.data[i].stats.count > 0:
                 slot_indices.append(i)
-                # Avoid List copy, use String(ptr, len) if available,
-                # or just use the existing chars list more efficiently.
                 var entry = self.data[i]
                 var chars = List[UInt8](capacity=entry.length)
                 for j in range(entry.length):

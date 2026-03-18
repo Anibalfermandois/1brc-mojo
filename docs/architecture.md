@@ -65,7 +65,7 @@ We use a custom `Profiler` (in `src/profiler.mojo`) to measure the performance o
 
 | Dataset | File size | System Median (Wall-clock) | Engine Peak (Parse Stage) | Note |
 |---|---|---|---|---|
-| **100m** | 1.3 GB | ~209ms | **721 M rows/s** | Fully cached in RAM |
+| **100m** | 1.3 GB | ~170ms | **743.54 M rows/s** | Fully cached in RAM |
 | **300m** | 3.9 GB | ~724ms | **476 M rows/s** | Fully cached in RAM |
 | **600m** | 7.7 GB | ~10070ms | **72 M rows/s** | I/O (SSD) Bound |
 | **1b** | 13.0 GB | N/A | Variable | Streaming mode (`MADV_SEQUENTIAL`) |

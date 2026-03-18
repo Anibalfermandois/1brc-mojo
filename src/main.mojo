@@ -1,7 +1,7 @@
 from std.sys import argv
 from std.sys.info import num_logical_cores
-from perfect_hashmap import PerfectStationMap
-from parser import parse_chunk, ParserMetrics
+from perfect_hashmap import PerfectStationMap, EmptyMapMetrics
+from parser import parse_chunk, EmptyParserMetrics
 from mmap import MappedFile, MADV_SEQUENTIAL, MADV_WILLNEED, MADV_DONTNEED, madvise_range
 from std.algorithm import parallelize
 from profiler import Profiler
@@ -42,21 +42,21 @@ def main() raises:
     prof.toc("Chunk Boundary Calculation")
 
     prof.tic("Map Initialization")
-    var maps = List[PerfectStationMap[TRACK_METRICS=False]](capacity=num_threads)
+    var maps = List[PerfectStationMap[MAP_TRACKER=EmptyMapMetrics]](capacity=num_threads)
     for _ in range(num_threads):
-        maps.append(PerfectStationMap[TRACK_METRICS=False]())
+        maps.append(PerfectStationMap[MAP_TRACKER=EmptyMapMetrics]())
     prof.toc("Map Initialization")
 
     prof.tic("Parallel Parse")
     @parameter
-    fn process_chunk[STREAMING: Bool](tid: Int):
+    def process_chunk[STREAMING: Bool](tid: Int):
         var start     = chunk_starts[tid]
         var end       = chunk_starts[tid + 1]
         var chunk_ptr = ptr + start
         var chunk_len = end - start
         var maps_ptr  = maps.unsafe_ptr()
-        var metrics   = ParserMetrics()
-        parse_chunk(maps_ptr[tid], chunk_ptr, chunk_len, metrics)
+        var metrics   = EmptyParserMetrics()
+        parse_chunk[EmptyParserMetrics, EmptyMapMetrics](maps_ptr[tid], chunk_ptr, chunk_len, metrics)
         comptime if STREAMING:
             madvise_range(chunk_ptr, chunk_len, MADV_DONTNEED)
 
@@ -68,7 +68,7 @@ def main() raises:
 
     # Merge all thread-local hashmaps into the first one
     prof.tic("Merge Maps")
-    var final_map = PerfectStationMap[TRACK_METRICS=False]()
+    var final_map = PerfectStationMap[MAP_TRACKER=EmptyMapMetrics]()
     for i in range(num_threads):
         final_map.merge_from(maps[i])
     prof.toc("Merge Maps")
