@@ -14,3 +14,4 @@ bench = { cmd = "entrypoints/bench.sh", description = "Run benchmark (warm cache
 bench-300m = { cmd = "entrypoints/bench.sh measurements_300m.txt 5", description = "Bench 300m file, 5 runs" }
 bench-600m = { cmd = "entrypoints/bench.sh measurements_600m.txt 5", description = "Bench 600m file, 5 runs" }
 bench-1b = { cmd = "entrypoints/bench.sh measurements_1b.txt 5", description = "Bench 1b file, 5 runs" }
+analyze = { cmd = "entrypoints/analyze.sh", description = "Deep analysis (collisions & metrics)" }

@@ -26,8 +26,14 @@ from std.benchmark import (
     Unit,
 )
 
-def run_pipeline[M: MapTracker, P: ParserTracker, TRACK_METRICS: Bool](filename: String, once: Bool = False) raises:
-    var mode_str: String = "ANALYSIS" if TRACK_METRICS else "BENCHMARK"
+def run_pipeline[
+    M: MapTracker, 
+    P: ParserTracker, 
+    TRACK_METRICS: Bool, 
+    once: Bool, 
+    no_print: Bool
+](filename: String) raises:
+    comptime mode_str: String = "ANALYSIS" if TRACK_METRICS else "BENCHMARK"
 
     print("=" * 60)
     print("1BRC Unified Tool [Mode: ", mode_str, "] —", filename)
@@ -88,7 +94,7 @@ def run_pipeline[M: MapTracker, P: ParserTracker, TRACK_METRICS: Bool](filename:
         
         parallelize[process_chunk](num_threads)
 
-    if not TRACK_METRICS and not once:
+    comptime if not TRACK_METRICS and not once:
         # We use std.benchmark for the actual parsing phase
         var config = BenchConfig(
             num_warmup_iters=1,
@@ -124,7 +130,7 @@ def run_pipeline[M: MapTracker, P: ParserTracker, TRACK_METRICS: Bool](filename:
         else:
             run_parallel[False]()
         var t1_parse = perf_counter_ns()
-        if once:
+        comptime if TRACK_METRICS or once:
             print("Parse Time: ", Float64(t1_parse - t0_parse) / 1_000_000.0, " ms")
 
     # ── Phase 3: Merge & Print ─────────────────────────────────────
@@ -133,9 +139,10 @@ def run_pipeline[M: MapTracker, P: ParserTracker, TRACK_METRICS: Bool](filename:
     for i in range(num_threads):
         final_map.merge_from(maps[i])
     var t1_merge = perf_counter_ns()
-    print("Merge Time: ", Float64(t1_merge - t0_merge) / 1_000_000.0, " ms")
-
-    final_map.print_sorted()
+    
+    comptime if not no_print:
+        print("Merge Time: ", Float64(t1_merge - t0_merge) / 1_000_000.0, " ms")
+        final_map.print_sorted()
 
     # ── Summary & Analysis Output ──────────────────────────────────
     comptime if TRACK_METRICS:
@@ -149,17 +156,40 @@ def main() raises:
     var index = 1
     var analyze_mode = False
     var once_mode = False
+    var no_print = False
 
     while index < len(args):
-        if args[index] == "--analyze" or args[index] == "-a":
+        var arg = args[index]
+        if arg == "--analyze" or arg == "-a":
             analyze_mode = True
-        elif args[index] == "--once":
+        elif arg == "--once":
             once_mode = True
+        elif arg == "--no-print":
+            no_print = True
         else:
-            filename = args[index]
+            filename = arg
         index += 1
 
+    # Dispatch to specialized comptime versions
     if analyze_mode:
-        run_pipeline[MapMetrics, ParserMetrics, True](filename, once_mode)
+        if once_mode:
+            if no_print:
+                run_pipeline[MapMetrics, ParserMetrics, True, True, True](filename)
+            else:
+                run_pipeline[MapMetrics, ParserMetrics, True, True, False](filename)
+        else:
+            if no_print:
+                run_pipeline[MapMetrics, ParserMetrics, True, False, True](filename)
+            else:
+                run_pipeline[MapMetrics, ParserMetrics, True, False, False](filename)
     else:
-        run_pipeline[EmptyMapMetrics, EmptyParserMetrics, False](filename, once_mode)
+        if once_mode:
+            if no_print:
+                run_pipeline[EmptyMapMetrics, EmptyParserMetrics, False, True, True](filename)
+            else:
+                run_pipeline[EmptyMapMetrics, EmptyParserMetrics, False, True, False](filename)
+        else:
+            if no_print:
+                run_pipeline[EmptyMapMetrics, EmptyParserMetrics, False, False, True](filename)
+            else:
+                run_pipeline[EmptyMapMetrics, EmptyParserMetrics, False, False, False](filename)

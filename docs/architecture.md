@@ -38,37 +38,33 @@ This document outlines the technical architecture and the specific optimizations
 ## 0. Development Environment & Benchmarking
 
 ### Performance Metric Definitions
-To ensure clarity, we distinguish between two ways of measuring performance:
+The `entrypoints/bench.sh` tool now explicitly reports two primary metrics:
 
-1.  **System Throughput (Median Wall-Clock)**: The total end-to-end time. This includes I/O setup (mmap), pre-loading the file into RAM (`MADV_WILLNEED`), the parallel parse, and final merging.
-2.  **Engine Throughput (Parse Stage Peak)**: The throughput of the specialized `parse_chunk` loop alone. It measures how fast the CPU can process data that is *already present* in physical RAM. This is where the implementation hits its extreme peaks (~600+ M rows/s).
+1.  **System Wall-Clock (Total Duration)**: The end-to-end time measured by the shell. It includes process startup, memory-mapping (`mmap`), page-cache warming, the parallel parse, final result merging, and shell overhead.
+2.  **Mojo Internal Parse Time (Engine Throughput)**: The duration of the specialized `parallelize` parse stage alone, measured internally by Mojo using `perf_counter_ns`. This is the "pure" throughput of the CPU processing RAM-cached data.
 
 ### Environment Setup (pixi)
 
-The project uses [pixi](https://pixi.sh) for reproducible environment management. The nightly `max` conda package (which includes the `mojo` compiler) is pulled from Modular's nightly channel.
+The project uses [pixi](https://pixi.sh) for reproducible environment management.
 
 ```bash
 pixi install        # create/update the environment
 pixi run build      # compile src/perf.mojo → bin/perf_bin with -O3
 pixi run bench      # warm-cache benchmark (default: measurements_300m.txt, 5 runs)
-pixi run bench-300m # explicit 300m, 5 runs
-pixi run bench-600m # explicit 600m, 5 runs
-pixi run bench-1b   # explicit 1b, 5 runs
+pixi run analyze    # deep metrics: collisions, distribution, and internal timing
 ```
 
-### Profiling
+### Profiling & Analysis
 
-We use a custom `Profiler` (in `src/profiler.mojo`) to measure the performance of different pipeline stages.
-- **Deep Analysis:** `pixi run mojo run src/perf.mojo <file> --analyze` reports pure "Engine Throughput" for the parse stage.
+- **Deep Analysis:** `entrypoints/analyze.sh` (or `pixi run analyze`) tracks hash collisions and deep parser metrics with minimal overhead.
 
 **Standardized Benchmark Results (Warm cache, MacBook Air M2):**
 
-| Dataset | File size | System Median (Wall-clock) | Engine Peak (Parse Stage) | Note |
+| Dataset | File size | Wall-Clock (Total) | Mojo Parse (Engine) | Engine Throughput |
 |---|---|---|---|---|
-| **100m** | 1.3 GB | ~170ms | **743.54 M rows/s** | Fully cached in RAM |
-| **300m** | 3.9 GB | ~724ms | **476 M rows/s** | Fully cached in RAM |
-| **600m** | 7.7 GB | ~10070ms | **72 M rows/s** | I/O (SSD) Bound |
-| **1b** | 13.0 GB | N/A | Variable | Streaming mode (`MADV_SEQUENTIAL`) |
+| **100m** | 1.3 GB | ~190ms | ~140ms | **714.28 M rows/s** |
+| **300m** | 3.9 GB | ~720ms | ~550ms | **545.45 M rows/s** |
+| **600m** | 7.7 GB | ~10070ms | N/A | **60 M rows/s** (SSD Bound) |
 
 ---
 
