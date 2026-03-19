@@ -1,17 +1,17 @@
 from std.sys import argv
 from std.sys.info import num_logical_cores
-from perfect_hashmap import PerfectStationMap, EmptyMapMetrics
-from parser import parse_chunk, EmptyParserMetrics
+from std.time import perf_counter_ns
+from perfect_hashmap import PerfectStationMap
+from metrics import EmptyMapMetrics, EmptyParserMetrics
+from parser import parse_chunk
 from mmap import MappedFile, MADV_SEQUENTIAL, MADV_WILLNEED, MADV_DONTNEED, madvise_range
 from std.algorithm import parallelize
-from profiler import Profiler
 
 def main() raises:
     var filename = "measurements_600m.txt"
     if len(argv()) > 1:
         filename = argv()[1]
 
-    var prof = Profiler()
     print("Reading", filename, "...")
 
     var mapped = MappedFile(filename)
@@ -27,10 +27,10 @@ def main() raises:
     else:
         mapped.advise(MADV_WILLNEED)
 
+    var t0_setup = perf_counter_ns()
     var num_threads = num_logical_cores()
     var chunk_size = size // num_threads
 
-    prof.tic("Chunk Boundary Calculation")
     var chunk_starts = List[Int](capacity=num_threads + 1)
     chunk_starts.append(0)
     for i in range(1, num_threads):
@@ -39,15 +39,16 @@ def main() raises:
             start_guess -= 1
         chunk_starts.append(start_guess)
     chunk_starts.append(size)
-    prof.toc("Chunk Boundary Calculation")
 
-    prof.tic("Map Initialization")
     var maps = List[PerfectStationMap[MAP_TRACKER=EmptyMapMetrics]](capacity=num_threads)
     for _ in range(num_threads):
         maps.append(PerfectStationMap[MAP_TRACKER=EmptyMapMetrics]())
-    prof.toc("Map Initialization")
+    
+    var t1_setup = perf_counter_ns()
+    print("Setup Time: ", Float64(t1_setup - t0_setup) / 1_000_000.0, " ms")
 
-    prof.tic("Parallel Parse")
+    print("Parallel Parse ...")
+    var t0_parse = perf_counter_ns()
     @parameter
     def process_chunk[STREAMING: Bool](tid: Int):
         var start     = chunk_starts[tid]
@@ -64,15 +65,17 @@ def main() raises:
         parallelize[process_chunk[True]](num_threads)
     else:
         parallelize[process_chunk[False]](num_threads)
-    prof.toc("Parallel Parse")
+    var t1_parse = perf_counter_ns()
+    print("Parse Time: ", Float64(t1_parse - t0_parse) / 1_000_000.0, " ms")
 
     # Merge all thread-local hashmaps into the first one
-    prof.tic("Merge Maps")
+    print("Merge Maps ...")
+    var t0_merge = perf_counter_ns()
     var final_map = PerfectStationMap[MAP_TRACKER=EmptyMapMetrics]()
     for i in range(num_threads):
         final_map.merge_from(maps[i])
-    prof.toc("Merge Maps")
+    var t1_merge = perf_counter_ns()
+    print("Merge Time: ", Float64(t1_merge - t0_merge) / 1_000_000.0, " ms")
 
-    prof.report()
     final_map.print_sorted()
     mapped.close()

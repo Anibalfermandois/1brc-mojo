@@ -34,8 +34,8 @@ from std.memory import UnsafePointer
 from std.ffi import external_call
 from layout import Layout, LayoutTensor
 from perfect_hashmap import PerfectStationMap, StationStats, MapEntry
+from metrics import EmptyMapMetrics
 from mmap import MappedFile, MADV_WILLNEED
-from profiler import Profiler
 
 # Compile-time constants
 comptime MAX_FILE_BYTES: Int = 4_200_000_000  # 4.1 GB; increase for larger files
@@ -162,11 +162,9 @@ def main() raises:
     if len(argv()) > 1:
         filename = argv()[1]
 
-    var prof = Profiler()
     print("GPU 1BRC:", filename)
     print("N_CHUNKS =", N_CHUNKS, "  GPU_CAPACITY =", GPU_CAPACITY)
 
-    prof.tic("mmap + WILLNEED")
     var mapped = MappedFile(filename)
     var size   = mapped.size
     if size > MAX_FILE_BYTES:
@@ -175,10 +173,8 @@ def main() raises:
         mapped.close()
         return
     mapped.advise(MADV_WILLNEED)
-    prof.toc("mmap + WILLNEED")
 
     # Chunk boundaries (same newline-retreat strategy as main.mojo).
-    prof.tic("Chunk boundaries")
     var chunk_size = size // N_CHUNKS
     var cpu_chunks = List[Int64](capacity=N_CHUNKS + 1)
     cpu_chunks.append(Int64(0))
@@ -188,7 +184,6 @@ def main() raises:
             guess -= 1
         cpu_chunks.append(Int64(guess))
     cpu_chunks.append(Int64(size))
-    prof.toc("Chunk boundaries")
 
     var ctx = DeviceContext()
 
@@ -197,7 +192,6 @@ def main() raises:
     # valid. We allocate a Metal-compatible host buffer and memcpy from mmap.
     # On Apple Silicon (unified memory) this copies virtual-address mappings
     # within the same physical DRAM -- typically ~50 ms for 4 GB.
-    prof.tic("Data upload to GPU")
     var host_data_buf = ctx.enqueue_create_host_buffer[DType.uint8](size)
     ctx.synchronize()
     _ = external_call["memcpy", NoneType](
@@ -218,7 +212,6 @@ def main() raises:
 
     var dev_result_buf = ctx.enqueue_create_buffer[DType.int64](RESULT_SIZE)
     ctx.synchronize()
-    prof.toc("Data upload to GPU")
 
     var dev_data   = LayoutTensor[DType.uint8, data_layout](dev_data_buf)
     var dev_chunks = LayoutTensor[DType.int64, chunks_layout](dev_chunks_buf)
@@ -226,7 +219,6 @@ def main() raises:
 
     # grid_dim=N_CHUNKS, block_dim=1: one thread per chunk.
     # Deliberate underutilisation to measure per-thread GPU throughput baseline.
-    prof.tic("GPU parse")
     ctx.enqueue_function[gpu_parse_kernel, gpu_parse_kernel](
         dev_data,
         dev_chunks,
@@ -235,12 +227,10 @@ def main() raises:
         block_dim=1,
     )
     ctx.synchronize()
-    prof.toc("GPU parse")
 
     # Merge: read result buffer, resolve names via original mmap ptr + name_offset.
     # Using mapped.ptr (MutExternalOrigin) avoids any unsafe origin casting.
-    prof.tic("Merge (GPU->CPU)")
-    var final_map = PerfectStationMap[TRACK_METRICS=False]()
+    var final_map = PerfectStationMap[MAP_TRACKER=EmptyMapMetrics]()
 
     with dev_result_buf.map_to_host() as host_result:
         var result_view = LayoutTensor[DType.int64, result_layout](host_result)
@@ -264,8 +254,6 @@ def main() raises:
                 stats.count = count
 
                 final_map.update_from_stats(name_ptr, name_len, stats)
-    prof.toc("Merge (GPU->CPU)")
 
-    prof.report()
     final_map.print_sorted()
     mapped.close()
