@@ -69,6 +69,7 @@ def run_pipeline[
     for _ in range(num_threads):
         maps.append(PerfectStationMap[MAP_TRACKER=M]())
     
+
     var t1_setup = perf_counter_ns()
     print("Setup Time: ", Float64(t1_setup - t0_setup) / 1_000_000.0, " ms")
 
@@ -152,44 +153,29 @@ def run_pipeline[
 
 def main() raises:
     var args = argv()
-    var filename = "measurements_100m.txt" # fallback
-    var index = 1
+    var filename = String("measurements_100m.txt")
     var analyze_mode = False
     var once_mode = False
     var no_print = False
 
-    while index < len(args):
-        var arg = args[index]
-        if arg == "--analyze" or arg == "-a":
-            analyze_mode = True
-        elif arg == "--once":
-            once_mode = True
-        elif arg == "--no-print":
-            no_print = True
-        else:
-            filename = arg
-        index += 1
+    for i in range(1, len(args)):
+        var arg = args[i]
+        if   arg == "--analyze" or arg == "-a": analyze_mode = True
+        elif arg == "--once":                   once_mode = True
+        elif arg == "--no-print":               no_print = True
+        else:                                   filename = arg
 
-    # Dispatch to specialized comptime versions
+    # Generic dispatch helper to bridge runtime flags to comptime specializations
+    @parameter
+    fn dispatch[M: MapTracker, P: ParserTracker, TRACK: Bool]() raises:
+        if once_mode:
+            if no_print: run_pipeline[M, P, TRACK, True, True](filename)
+            else:        run_pipeline[M, P, TRACK, True, False](filename)
+        else:
+            if no_print: run_pipeline[M, P, TRACK, False, True](filename)
+            else:        run_pipeline[M, P, TRACK, False, False](filename)
+
     if analyze_mode:
-        if once_mode:
-            if no_print:
-                run_pipeline[MapMetrics, ParserMetrics, True, True, True](filename)
-            else:
-                run_pipeline[MapMetrics, ParserMetrics, True, True, False](filename)
-        else:
-            if no_print:
-                run_pipeline[MapMetrics, ParserMetrics, True, False, True](filename)
-            else:
-                run_pipeline[MapMetrics, ParserMetrics, True, False, False](filename)
+        dispatch[MapMetrics, ParserMetrics, True]()
     else:
-        if once_mode:
-            if no_print:
-                run_pipeline[EmptyMapMetrics, EmptyParserMetrics, False, True, True](filename)
-            else:
-                run_pipeline[EmptyMapMetrics, EmptyParserMetrics, False, True, False](filename)
-        else:
-            if no_print:
-                run_pipeline[EmptyMapMetrics, EmptyParserMetrics, False, False, True](filename)
-            else:
-                run_pipeline[EmptyMapMetrics, EmptyParserMetrics, False, False, False](filename)
+        dispatch[EmptyMapMetrics, EmptyParserMetrics, False]()

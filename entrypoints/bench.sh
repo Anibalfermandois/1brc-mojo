@@ -22,8 +22,8 @@ if [ ! -f "$FILE" ]; then
     exit 1
 fi
 
-if [ ! -f "$BIN" ] || [ "src/perf.mojo" -nt "$BIN" ]; then
-    echo "🔨 Binary out of date — rebuilding..."
+if [ ! -f "$BIN" ] || find src -name "*.mojo" -newer "$BIN" | grep -q .; then
+    echo "🔨 Binary out of date (src/*.mojo) — rebuilding..."
     entrypoints/build.sh > /dev/null
 fi
 
