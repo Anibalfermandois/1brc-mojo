@@ -11,3 +11,5 @@ This file tracks the performance of different optimizations over time. New resul
 | 2026-03-17 | Current | 300M | 720ms | 545.45M | Standardized run |
 | 2026-03-17 | Current | 100M | 190ms | 714.28M | Standardized run |
 | 2026-03-20 | Post-Cleanup | 300M | 612ms | 666.67M | After removing experimental vectorized code |
+| 2026-03-20 | Streaming I/O | 300M | 624ms | 652.17M | Explicit pread + Double-buffering |
+| 2026-03-20 | Streaming I/O | 600M | 6993ms | 112.71M | Significant gain over mmap on MacOS (600M=7.8GB) |

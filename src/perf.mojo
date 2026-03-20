@@ -16,6 +16,7 @@ from mmap import MappedFile, MADV_SEQUENTIAL, MADV_WILLNEED, MADV_DONTNEED, madv
 from perfect_hashmap import PerfectStationMap
 from parser import parse_chunk
 from analyzer import run_analysis
+from streaming import FileHandle, DoubleBufferedStream
 from std.algorithm import parallelize
 from std.benchmark import (
     Bench,
@@ -46,10 +47,11 @@ def run_pipeline[
 
     comptime STREAMING_THRESHOLD = 8 * 1024 * 1024 * 1024  # 8 GB
     var use_streaming = size >= STREAMING_THRESHOLD
-    if use_streaming:
-        mapped.advise(MADV_SEQUENTIAL)
-    else:
+    
+    if not use_streaming:
         mapped.advise(MADV_WILLNEED)
+    # If streaming, we close mmap and use DoubleBufferedStream instead
+    # to avoid page-fault thrashing on MacOS.
 
     # ── Phase 2: Parallel Pipeline ─────────────────────────────────
     var t0_setup = perf_counter_ns()
@@ -58,11 +60,16 @@ def run_pipeline[
 
     var chunk_starts = List[Int](capacity=num_threads + 1)
     chunk_starts.append(0)
-    for i in range(1, num_threads):
-        var start_guess = i * chunk_size
-        while start_guess > 0 and ptr[start_guess - 1] != 10:
-            start_guess -= 1
-        chunk_starts.append(start_guess)
+    if not use_streaming:
+        for i in range(1, num_threads):
+            var start_guess = i * chunk_size
+            while start_guess > 0 and ptr[start_guess - 1] != 10:
+                start_guess -= 1
+            chunk_starts.append(start_guess)
+    else:
+        # Approximate starts; DoubleBufferedStream will align them.
+        for i in range(1, num_threads):
+            chunk_starts.append(i * chunk_size)
     chunk_starts.append(size)
 
     var maps = List[PerfectStationMap[MAP_TRACKER=M]](capacity=num_threads)
@@ -83,15 +90,23 @@ def run_pipeline[
         fn process_chunk(tid: Int):
             var start      = chunk_starts[tid]
             var end        = chunk_starts[tid + 1]
-            var chunk_ptr  = ptr + start
-            var chunk_len  = end - start
             var maps_ptr   = maps.unsafe_ptr()
-            
             var thread_metrics = P()
-            parse_chunk[P, M](maps_ptr[tid], chunk_ptr, chunk_len, thread_metrics)
-
+            
             comptime if STREAMING:
-                madvise_range(chunk_ptr, chunk_len, MADV_DONTNEED)
+                # Use Buffered I/O for large files
+                try:
+                    var handle = FileHandle(filename)
+                    var stream = DoubleBufferedStream(handle)
+                    stream.process_range[P,M](maps_ptr[tid], start, end, thread_metrics)
+                    stream.close()
+                    handle.close()
+                except e:
+                    print("Streaming error in thread ", tid, ": ", e)
+            else:
+                var chunk_ptr  = ptr + start
+                var chunk_len  = end - start
+                parse_chunk[P, M](maps_ptr[tid], chunk_ptr, chunk_len, thread_metrics)
         
         parallelize[process_chunk](num_threads)
 

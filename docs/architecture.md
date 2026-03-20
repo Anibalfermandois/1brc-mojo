@@ -8,8 +8,9 @@ The project achieves high throughput by combining Mojo's low-level systems capab
 
 ### Core Metrics (MacBook Air M2)
 - **Peak Engine Throughput:** ~714 M rows/s (100M dataset)
-- **RAM-Speed Throughput:** ~545 M rows/s (300M dataset)
-- **Disk-Bound Throughput:** ~60 M rows/s (600M+ dataset)
+- **RAM-Speed Throughput:** ~666 M rows/s (300M dataset)
+- **Streaming Throughput (1B):** [Pending Benchmark] — Optimized via DoubleBufferedStream
+- **Legacy Disk-Bound Throughput:** ~60 M rows/s (600M+ dataset using mmap)
 
 For detailed results, see [Benchmarks](benchmarks.md) and [Performance Log](performance_log.md).
 
@@ -19,7 +20,7 @@ For detailed results, see [Benchmarks](benchmarks.md) and [Performance Log](perf
 
 ### 1. Primary Architecture
 - **[Hash Table Design](optimizations/hash_table.md)**: Perfect hashing (O(1)), AoS for cache locality, and zero-allocation updates.
-- **[I/O & Parallelism](optimizations/io_and_parallelism.md)**: Memory-mapped I/O with `madvise` strategies and linear scaling via `std.algorithm.parallelize`.
+- **[I/O & Parallelism](optimizations/io_and_parallelism.md)**: Hybrid I/O model (mmap with `madvise` for < 8GB; `pread` with `DoubleBufferedStream` for ≥ 8GB).
 
 ### 2. Hot Path Optimizations
 - **[Hot Path Optimizations](optimizations/hot_path.md)**: hardware-accelerated SIMD scanning and branchless temperature parsing.
