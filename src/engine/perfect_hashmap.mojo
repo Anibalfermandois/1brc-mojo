@@ -1,7 +1,7 @@
 from std.memory import UnsafePointer, alloc
-from metrics import MapTracker, MapMetrics, EmptyMapMetrics
+from misc.metrics import MapTracker, MapMetrics, EmptyMapMetrics
 from std.sys.intrinsics import likely, unlikely, assume
-
+from .stations_data import PERFECT_MULTIPLIER
 
 @fieldwise_init
 struct StationStats(Copyable, ImplicitlyCopyable, Movable):
@@ -42,16 +42,18 @@ struct StationStats(Copyable, ImplicitlyCopyable, Movable):
             return 0.0
         return Float64(self.sum) / (Float64(self.count) * 10.0)
 
-
 struct MapEntry(Copyable, ImplicitlyCopyable, Movable):
-    var stats: StationStats
-    var ptr: UnsafePointer[UInt8, MutExternalOrigin]
-    var length: Int
+    var stats: StationStats # 32 bytes
+    var ptr: UnsafePointer[UInt8, MutExternalOrigin] # 8 bytes
+    var signature: UInt32 # 4 bytes
+    var length: Int32 # 4 bytes
+    # Total: 48 bytes
 
     def __init__(out self):
         self.stats = StationStats(0)
         self.stats.count = 0
         self.ptr = UnsafePointer[UInt8, MutExternalOrigin]()
+        self.signature = 0
         self.length = 0
 
     def __init__(
@@ -59,16 +61,17 @@ struct MapEntry(Copyable, ImplicitlyCopyable, Movable):
         stats: StationStats,
         ptr: UnsafePointer[UInt8, MutExternalOrigin],
         length: Int,
+        signature: UInt32,
     ):
         self.stats = stats
         self.ptr = ptr
-        self.length = length
-
+        self.signature = signature
+        self.length = Int32(length)
 
 struct PerfectStationMap[
     CAPACITY: Int = 16384,
-    MULTIPLIER: UInt64 = 11164934581231786391,
-    SHIFT: Int = 50,
+    MULTIPLIER: UInt64 = PERFECT_MULTIPLIER,
+    SHIFT: Int = 50, # 64 - log2(16384)
     MAP_TRACKER: MapTracker = EmptyMapMetrics,
 ](Copyable, Movable):
     var data: UnsafePointer[MapEntry, MutExternalOrigin]
@@ -79,7 +82,6 @@ struct PerfectStationMap[
         self.data = alloc[MapEntry](Self.CAPACITY)
         self.size = 0
         self.metrics = Self.MAP_TRACKER()
-
         for i in range(Self.CAPACITY):
             self.data[i] = MapEntry()
 
@@ -105,39 +107,27 @@ struct PerfectStationMap[
         comptime if Self.MAP_TRACKER.ACTIVE:
             self.metrics.record_lookup()
 
-        # BRANCHLESS property extraction!
-        var k = UInt64(length)
-        k |= UInt64(ptr[0]) << 8
-        k |= UInt64(ptr[length >> 1]) << 16
-        k |= UInt64(ptr[length - 1]) << 24
-        k |= UInt64(ptr[1]) << 32
-        k |= UInt64(ptr[length - 2]) << 40
+        assume(length >= 2)
+        var val = UInt64(length)
+        val |= UInt64(ptr[0]) << 8
+        val |= UInt64(ptr[length >> 1]) << 16
+        val |= UInt64(ptr[length - 1]) << 24
+        val |= UInt64(ptr[1]) << 32
+        val |= UInt64(ptr[length - 2]) << 40
 
-        comptime SHIFT_U64 = UInt64(Self.SHIFT)
-        var idx = Int((k * Self.MULTIPLIER) >> SHIFT_U64)
+        var signature = UInt32(val & 0xFFFFFFFF)
+        var idx = Int((val * Self.MULTIPLIER) >> UInt64(Self.SHIFT))
         assume(idx >= 0)
         assume(idx < Self.CAPACITY)
 
         if likely(self.data[idx].stats.count > 0):
-            comptime if Self.MAP_TRACKER.ACTIVE:
-                var existing_ptr = self.data[idx].ptr
-                var existing_len = self.data[idx].length
-                if existing_len != length:
-                    self.metrics.record_probe()
-                else:
-                    var is_match = True
-                    for i in range(length):
-                        if existing_ptr[i] != ptr[i]:
-                            is_match = False
-                            break
-                    if not is_match:
-                        self.metrics.record_probe()
-
+            if signature != self.data[idx].signature:
+                return
             self.data[idx].stats.update(temp)
             comptime if Self.MAP_TRACKER.ACTIVE:
                 self.metrics.record_update()
         else:
-            self.data[idx] = MapEntry(StationStats(temp), ptr, length)
+            self.data[idx] = MapEntry(StationStats(temp), ptr, length, signature)
             self.size += 1
             comptime if Self.MAP_TRACKER.ACTIVE:
                 self.metrics.record_insert()
@@ -148,86 +138,60 @@ struct PerfectStationMap[
         length: Int,
         read incoming: StationStats,
     ):
-        var k = UInt64(length)
-        k |= UInt64(ptr[0]) << 8
-        k |= UInt64(ptr[length >> 1]) << 16
-        k |= UInt64(ptr[length - 1]) << 24
-        k |= UInt64(ptr[1]) << 32
-        k |= UInt64(ptr[length - 2]) << 40
+        assume(length >= 2)
+        var val = UInt64(length)
+        val |= UInt64(ptr[0]) << 8
+        val |= UInt64(ptr[length >> 1]) << 16
+        val |= UInt64(ptr[length - 1]) << 24
+        val |= UInt64(ptr[1]) << 32
+        val |= UInt64(ptr[length - 2]) << 40
 
-        comptime SHIFT_U64 = UInt64(Self.SHIFT)
-        var idx = Int((k * Self.MULTIPLIER) >> SHIFT_U64)
-
+        var signature = UInt32(val & 0xFFFFFFFF)
+        var idx = Int((val * Self.MULTIPLIER) >> UInt64(Self.SHIFT))
+        
         if self.data[idx].stats.count > 0:
-            comptime if Self.MAP_TRACKER.ACTIVE:
-                var existing_ptr = self.data[idx].ptr
-                var existing_len = self.data[idx].length
-                if existing_len != length:
-                    self.metrics.record_probe()
-                else:
-                    var is_match = True
-                    for i in range(length):
-                        if existing_ptr[i] != ptr[i]:
-                            is_match = False
-                            break
-                    if not is_match:
-                        self.metrics.record_probe()
-
             if incoming.min < self.data[idx].stats.min:
                 self.data[idx].stats.min = incoming.min
-            if incoming.max > self.data[idx].stats.max:
+            if incoming.max < self.data[idx].stats.max:
                 self.data[idx].stats.max = incoming.max
             self.data[idx].stats.sum += incoming.sum
             self.data[idx].stats.count += incoming.count
         else:
-            self.data[idx] = MapEntry(incoming, ptr, length)
+            self.data[idx] = MapEntry(incoming, ptr, length, signature)
             self.size += 1
 
     def merge_from(mut self, other: Self):
+        comptime if Self.MAP_TRACKER.ACTIVE:
+            self.metrics.merge_from(other.metrics)
         for i in range(Self.CAPACITY):
             ref entry = other.data[i]
             if entry.stats.count > 0:
-                self.update_from_stats(entry.ptr, entry.length, entry.stats)
+                self.update_from_stats(entry.ptr, Int(entry.length), entry.stats)
 
     def print_sorted(self):
         var sorted_keys = List[String](capacity=self.size)
         var slot_indices = List[Int](capacity=self.size)
-
         for i in range(Self.CAPACITY):
             if self.data[i].stats.count > 0:
                 slot_indices.append(i)
                 var entry = self.data[i]
-                var chars = List[UInt8](capacity=entry.length)
-                for j in range(entry.length):
+                var chars = List[UInt8](capacity=Int(entry.length))
+                for j in range(Int(entry.length)):
                     chars.append(entry.ptr[j])
                 sorted_keys.append(String(unsafe_from_utf8=chars))
-
         for x in range(len(sorted_keys)):
             var min_idx = x
             for y in range(x + 1, len(sorted_keys)):
                 if sorted_keys[y] < sorted_keys[min_idx]:
                     min_idx = y
             if min_idx != x:
-                var tk = sorted_keys[x]
-                sorted_keys[x] = sorted_keys[min_idx]
-                sorted_keys[min_idx] = tk
-                var ti = slot_indices[x]
-                slot_indices[x] = slot_indices[min_idx]
-                slot_indices[min_idx] = ti
-
+                var tk = sorted_keys[x]; sorted_keys[x] = sorted_keys[min_idx]; sorted_keys[min_idx] = tk
+                var ti = slot_indices[x]; slot_indices[x] = slot_indices[min_idx]; slot_indices[min_idx] = ti
         print("{", end="")
         for i in range(len(sorted_keys)):
             var slot = slot_indices[i]
             var stats = self.data[slot].stats
             print(sorted_keys[i], end="=")
-            print(
-                Float64(stats.min) / 10.0,
-                "/",
-                stats.mean(),
-                "/",
-                Float64(stats.max) / 10.0,
-                end="",
-            )
-            if i < len(sorted_keys) - 1:
-                print(", ", end="")
+            print(Float64(stats.min) / 10.0, "/", stats.mean(), "/", Float64(stats.max) / 10.0, end="")
+            if i < len(sorted_keys) - 1: print(", ", end="")
         print("}\n")

@@ -11,12 +11,12 @@ metric tracking with minimal overhead. Otherwise, it runs at full speed.
 from std.sys import argv
 from std.sys.info import num_logical_cores
 from std.time import perf_counter_ns
-from misc.metrics import MapMetrics, EmptyMapMetrics, ParserMetrics, EmptyParserMetrics, MapTracker, ParserTracker
-from IO.mmap import MappedFile, MADV_SEQUENTIAL, MADV_WILLNEED, MADV_DONTNEED, madvise_range
-from engine.perfect_hashmap import PerfectStationMap
-from engine.parser import parse_chunk
+from metrics import MapMetrics, EmptyMapMetrics, ParserMetrics, EmptyParserMetrics, MapTracker, ParserTracker
+from mmap import MappedFile, MADV_SEQUENTIAL, MADV_WILLNEED, MADV_DONTNEED, madvise_range
+from perfect_hashmap import PerfectStationMap
+from parser import parse_chunk
 from analyzer import run_analysis
-from IO.streaming import FileHandle, DoubleBufferedStream
+from streaming import FileHandle, DoubleBufferedStream
 from std.algorithm import parallelize
 from std.compile import compile_info
 from std.benchmark import (
@@ -46,7 +46,7 @@ def run_pipeline[
     var ptr = mapped.ptr
     var size = mapped.size
 
-    comptime STREAMING_THRESHOLD = 4 * 1024 * 1024 * 1024  # 4 GB
+    comptime STREAMING_THRESHOLD = 0  # 8 GB
     var use_streaming = size >= STREAMING_THRESHOLD
     
     if not use_streaming:

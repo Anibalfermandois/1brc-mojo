@@ -1,10 +1,10 @@
 from std.sys import argv
 from std.sys.info import num_logical_cores
 from std.time import perf_counter_ns
-from perfect_hashmap import PerfectStationMap
-from metrics import EmptyMapMetrics, EmptyParserMetrics
-from parser import parse_chunk
-from mmap import MappedFile, MADV_SEQUENTIAL, MADV_WILLNEED, MADV_DONTNEED, madvise_range
+from engine.perfect_hashmap import PerfectStationMap
+from misc.metrics import EmptyMapMetrics, EmptyParserMetrics
+from engine.parser import parse_chunk
+from IO.mmap import MappedFile, MADV_SEQUENTIAL, MADV_WILLNEED, MADV_DONTNEED, madvise_range
 from std.algorithm import parallelize
 
 def main() raises:

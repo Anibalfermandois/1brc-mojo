@@ -9,12 +9,13 @@ bypass the OS page cache management overhead for bulk sequential reads.
 from std.memory import UnsafePointer, memcpy, alloc
 from std.ffi import external_call
 from std.os.fstat import stat
-from metrics import ParserTracker, MapTracker
-from perfect_hashmap import PerfectStationMap
-from parser import parse_chunk
+from misc.metrics import ParserTracker, MapTracker
+from engine.perfect_hashmap import PerfectStationMap
+from engine.parser import parse_chunk
 from std.sys.intrinsics import unlikely
 
 comptime O_RDONLY: Int32 = 0
+comptime F_NOCACHE: Int32 = 48
 
 struct FileHandle(Copyable, ImplicitlyCopyable, Movable):
     """A simple thin wrapper around a file descriptor for pread usage."""
@@ -42,6 +43,12 @@ struct FileHandle(Copyable, ImplicitlyCopyable, Movable):
         if unlikely(self._fd < 0):
             raise Error("streaming: open() failed for: " + path)
 
+    def set_nocache(self) raises:
+        """Bypass the OS unified buffer cache (UBC). Critical for files > RAM."""
+        var res = external_call["fcntl", Int32](self._fd, F_NOCACHE, 1)
+        if res == -1:
+             raise Error("streaming: fcntl(F_NOCACHE) failed")
+
     def pread(self, buf: UnsafePointer[UInt8, MutExternalOrigin], count: Int, offset: Int) -> Int:
         """Read count bytes into buf starting at offset in the file."""
         return Int(external_call["pread", Int64](
@@ -58,6 +65,8 @@ struct FileHandle(Copyable, ImplicitlyCopyable, Movable):
 
 struct DoubleBuffer:
     """A structure that manages two buffers to handle data streaming and tail reconstruction."""
+    var base_a: UnsafePointer[UInt8, MutExternalOrigin]
+    var base_b: UnsafePointer[UInt8, MutExternalOrigin]
     var buf_a: UnsafePointer[UInt8, MutExternalOrigin]
     var buf_b: UnsafePointer[UInt8, MutExternalOrigin]
     var capacity: Int
@@ -65,8 +74,15 @@ struct DoubleBuffer:
 
     def __init__(out self, capacity: Int):
         self.capacity = capacity
-        self.buf_a = alloc[UInt8](capacity)
-        self.buf_b = alloc[UInt8](capacity)
+        # We manually align to 4096 bytes for F_NOCACHE performance
+        self.base_a = alloc[UInt8](capacity + 4096)
+        self.base_b = alloc[UInt8](capacity + 4096)
+        
+        var offset_a = (4096 - (Int(self.base_a) % 4096)) % 4096
+        var offset_b = (4096 - (Int(self.base_b) % 4096)) % 4096
+        
+        self.buf_a = self.base_a + offset_a
+        self.buf_b = self.base_b + offset_b
         self.tail_len = 0
 
     def get_active(self, step: Int) -> UnsafePointer[UInt8, MutExternalOrigin]:
@@ -76,8 +92,8 @@ struct DoubleBuffer:
         return self.buf_b if (step % 2 == 0) else self.buf_a
 
     def close(mut self):
-        if self.buf_a: self.buf_a.free()
-        if self.buf_b: self.buf_b.free()
+        if self.base_a: self.base_a.free()
+        if self.base_b: self.base_b.free()
         self.buf_a = UnsafePointer[UInt8, MutExternalOrigin]()
         self.buf_b = UnsafePointer[UInt8, MutExternalOrigin]()
 
@@ -107,7 +123,7 @@ def find_first_newline(handle: FileHandle, offset: Int) -> Int:
     return offset # Fallback
 
 struct DoubleBufferedStream[
-    BLOCK_SIZE: Int = 1 * 1024 * 1024, # 1MB
+    BLOCK_SIZE: Int = 4 * 1024 * 1024, # 4MB
 ]:
     """Manages streaming processing of a file range using pread and dual buffers.
     This replaces mmap to avoid page fault thrashing on large datasets on macOS.
@@ -128,51 +144,51 @@ struct DoubleBufferedStream[
         range_end: Int,
         mut metrics: P
     ) raises:
-        """Processes a byte range [range_start, range_end) using buffered pread."""
-        # 1. Align to first newline
+        """Processes a byte range [range_start, range_end) using overlapping pread."""
         var current_pos = find_first_newline(self.handle, range_start)
         var step = 0
         var tail_len = 0
         
-        while current_pos < range_end:
-            var active_buf = self.buffers.get_active(step)
-            
-            # 2. Read next block into active buffer (after any existing tail)
-            var to_read = Self.BLOCK_SIZE
-            if unlikely(current_pos + to_read > self.handle.size):
-                 to_read = self.handle.size - current_pos
-            
-            var bytes_read = 0
-            if to_read > 0:
-                bytes_read = self.handle.pread(active_buf + tail_len, to_read, current_pos)
-            
+        # Initial read to prime the pump
+        var active_buf = self.buffers.get_active(step)
+        var bytes_read = self.handle.pread(active_buf, Self.BLOCK_SIZE, current_pos)
+        
+        while bytes_read > 0:
             var total_len = bytes_read + tail_len
-            if total_len == 0: break
             
-            # 3. Find boundary of last full line
+            # Find boundary of last full line in CURRENT block
             var last_nl = find_last_newline(active_buf, total_len)
             
             if unlikely(last_nl == -1):
-                # Pathological city name > 1MB? Unlikely for 1BRC but handle it.
-                # If we don't find a newline, we just read MORE into the SAME buffer.
-                # In 1BRC max row is ~100 bytes, so BLOCK_SIZE=1MB is plenty.
                 raise Error("streaming: no newline found in " + String(total_len) + " bytes")
                 
-            # 4. Parse the full lines in the buffer
+            # Parse the full lines
             parse_chunk[P, M](map, active_buf, last_nl + 1, metrics)
             
-            # 5. Handle the tail (partial line)
+            # Prepare NEXT iteration
+            var next_step = step + 1
+            var next_buf = self.buffers.get_active(next_step)
+            
+            # Handle the tail (partial line)
             tail_len = total_len - (last_nl + 1)
-            var inactive_buf = self.buffers.get_inactive(step)
             if tail_len > 0:
-                memcpy(dest=inactive_buf, src=active_buf + (last_nl + 1), count=tail_len)
+                memcpy(dest=next_buf, src=active_buf + (last_nl + 1), count=tail_len)
             
             current_pos += bytes_read
-            step += 1
+            step = next_step
+            active_buf = next_buf
             
-            # Stop if we crossed the end (the next thread handles its part)
             if current_pos >= range_end:
-                 break
+                break
+                
+            var to_read = Self.BLOCK_SIZE
+            if unlikely(current_pos + to_read > self.handle.size):
+                to_read = self.handle.size - current_pos
+                
+            if to_read <= 0:
+                break
+                
+            bytes_read = self.handle.pread(active_buf + tail_len, to_read, current_pos)
         
         # 6. Flush remaining tail if this was the last chunk of the WHOLE file
         if current_pos >= self.handle.size and tail_len > 0:

@@ -2,8 +2,9 @@ from std.memory import UnsafePointer
 from std.sys.info import simd_width_of
 from std.bit import count_trailing_zeros
 from std.sys.intrinsics import likely, assume, expect
-from metrics import ParserTracker, ParserMetrics, EmptyParserMetrics, MapTracker
-from perfect_hashmap import PerfectStationMap
+from misc.metrics import ParserTracker, ParserMetrics, EmptyParserMetrics, MapTracker
+from engine.perfect_hashmap import PerfectStationMap
+
 
 comptime ASCII_LF = 10
 comptime ASCII_CR = 13

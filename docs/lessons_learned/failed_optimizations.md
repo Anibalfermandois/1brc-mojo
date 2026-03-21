@@ -47,3 +47,9 @@ This document records optimization attempts that did not yield the expected resu
     - **Vectorized Hash (SIMD Gathers):** ~220% regression (1636ms - 2016ms).
 - **Reason:** The overhead of batch buffer management and the extreme penalty of SIMD gathers far outweigh the theoretical benefits of hiding latency.
 - **Full Report:** See [Vectorized Parsing Investigation (docs/vectorized_parsing_report.md)](../vectorized_parsing_report.md).
+
+## The "mmap" Performance Cliff
+- **Observation:** Benchmarking 100M rows (1.3GB) showed ~714M rows/s, while 600M rows (8.2GB) initially plummeted to ~85M rows/s.
+- **Cause:** On a machine with 4.8GB RAM, `mmap` triggered severe page-cache trashing once the file size exceeded physical memory.
+- **Resolution:** Lowered the `STREAMING_THRESHOLD` to 4GB. Using explicit `pread` with `F_NOCACHE` recovered the performance to ~326M rows/s (3.8x gain).
+- **Lesson:** On macOS, explicit streaming is mandatory as soon as the dataset exceeds half of the available physical RAM.

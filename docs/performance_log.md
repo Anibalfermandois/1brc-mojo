@@ -14,3 +14,6 @@ This file tracks the performance of different optimizations over time. New resul
 | 2026-03-20 | Streaming I/O | 300M | 624ms | 652.17M | Explicit pread + Double-buffering |
 | 2026-03-20 | Streaming I/O | 600M | 6993ms | 112.71M | Significant gain over mmap on MacOS (600M=7.8GB) |
 | 2026-03-20 | Comptime Opt | 300M | 632ms | 638.30M | Added Likely and unlikely |
+| 2026-03-20 | Aligned Streaming | 100M | 137ms | 729.92M | With 4MB blocks and F_NOCACHE |
+| 2026-03-20 | Lookahead v2 | 600M | 7055ms | 85.05M | Sustainable streaming beyond 4.8GB RAM |
+| 2026-03-20 | Gap Recovery | 600M | 1836ms | 326.73M | Threshold lowered to 4GB (3.8x gain over mmap) |

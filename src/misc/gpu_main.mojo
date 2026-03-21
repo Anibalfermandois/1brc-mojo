@@ -33,9 +33,9 @@ from std.gpu.host import DeviceContext, DeviceBuffer
 from std.memory import UnsafePointer
 from std.ffi import external_call
 from layout import Layout, LayoutTensor
-from perfect_hashmap import PerfectStationMap, StationStats, MapEntry
-from metrics import EmptyMapMetrics
-from mmap import MappedFile, MADV_WILLNEED
+from engine.perfect_hashmap import PerfectStationMap, StationStats, MapEntry
+from misc.metrics import EmptyMapMetrics
+from IO.mmap import MappedFile, MADV_WILLNEED
 
 # Compile-time constants
 comptime MAX_FILE_BYTES: Int = 4_200_000_000  # 4.1 GB; increase for larger files
@@ -153,107 +153,107 @@ def gpu_parse_kernel(
         row_start = i
 
 
-def main() raises:
-    comptime if not has_accelerator():
-        print("No GPU found. gpu_main.mojo requires a GPU.")
-        return
+# def main() raises:
+#     comptime if not has_accelerator():
+#         print("No GPU found. gpu_main.mojo requires a GPU.")
+#         return
 
-    var filename = "measurements_300m.txt"
-    if len(argv()) > 1:
-        filename = argv()[1]
+#     var filename = "measurements_300m.txt"
+#     if len(argv()) > 1:
+#         filename = argv()[1]
 
-    print("GPU 1BRC:", filename)
-    print("N_CHUNKS =", N_CHUNKS, "  GPU_CAPACITY =", GPU_CAPACITY)
+#     print("GPU 1BRC:", filename)
+#     print("N_CHUNKS =", N_CHUNKS, "  GPU_CAPACITY =", GPU_CAPACITY)
 
-    var mapped = MappedFile(filename)
-    var size   = mapped.size
-    if size > MAX_FILE_BYTES:
-        print("ERROR: file size", size, "exceeds MAX_FILE_BYTES =", MAX_FILE_BYTES)
-        print("Recompile with a larger MAX_FILE_BYTES constant.")
-        mapped.close()
-        return
-    mapped.advise(MADV_WILLNEED)
+#     var mapped = MappedFile(filename)
+#     var size   = mapped.size
+#     if size > MAX_FILE_BYTES:
+#         print("ERROR: file size", size, "exceeds MAX_FILE_BYTES =", MAX_FILE_BYTES)
+#         print("Recompile with a larger MAX_FILE_BYTES constant.")
+#         mapped.close()
+#         return
+#     mapped.advise(MADV_WILLNEED)
 
-    # Chunk boundaries (same newline-retreat strategy as main.mojo).
-    var chunk_size = size // N_CHUNKS
-    var cpu_chunks = List[Int64](capacity=N_CHUNKS + 1)
-    cpu_chunks.append(Int64(0))
-    for ci in range(1, N_CHUNKS):
-        var guess = ci * chunk_size
-        while guess > 0 and mapped.ptr[guess - 1] != 10:
-            guess -= 1
-        cpu_chunks.append(Int64(guess))
-    cpu_chunks.append(Int64(size))
+#     # Chunk boundaries (same newline-retreat strategy as main.mojo).
+#     var chunk_size = size // N_CHUNKS
+#     var cpu_chunks = List[Int64](capacity=N_CHUNKS + 1)
+#     cpu_chunks.append(Int64(0))
+#     for ci in range(1, N_CHUNKS):
+#         var guess = ci * chunk_size
+#         while guess > 0 and mapped.ptr[guess - 1] != 10:
+#             guess -= 1
+#         cpu_chunks.append(Int64(guess))
+#     cpu_chunks.append(Int64(size))
 
-    var ctx = DeviceContext()
+#     var ctx = DeviceContext()
 
-    # Upload file data to GPU.
-    # Metal requires buffers to be Metal-managed; plain mmap pointers are not
-    # valid. We allocate a Metal-compatible host buffer and memcpy from mmap.
-    # On Apple Silicon (unified memory) this copies virtual-address mappings
-    # within the same physical DRAM -- typically ~50 ms for 4 GB.
-    var host_data_buf = ctx.enqueue_create_host_buffer[DType.uint8](size)
-    ctx.synchronize()
-    _ = external_call["memcpy", NoneType](
-        host_data_buf.unsafe_ptr().bitcast[NoneType](),
-        mapped.ptr.bitcast[NoneType](),
-        size,
-    )
-    var dev_data_buf = ctx.enqueue_create_buffer[DType.uint8](size)
-    ctx.enqueue_copy(dev_data_buf, host_data_buf)
+#     # Upload file data to GPU.
+#     # Metal requires buffers to be Metal-managed; plain mmap pointers are not
+#     # valid. We allocate a Metal-compatible host buffer and memcpy from mmap.
+#     # On Apple Silicon (unified memory) this copies virtual-address mappings
+#     # within the same physical DRAM -- typically ~50 ms for 4 GB.
+#     var host_data_buf = ctx.enqueue_create_host_buffer[DType.uint8](size)
+#     ctx.synchronize()
+#     _ = external_call["memcpy", NoneType](
+#         host_data_buf.unsafe_ptr().bitcast[NoneType](),
+#         mapped.ptr.bitcast[NoneType](),
+#         size,
+#     )
+#     var dev_data_buf = ctx.enqueue_create_buffer[DType.uint8](size)
+#     ctx.enqueue_copy(dev_data_buf, host_data_buf)
 
-    var host_chunks_buf = ctx.enqueue_create_host_buffer[DType.int64](N_CHUNKS + 1)
-    ctx.synchronize()
-    var hcp = host_chunks_buf.unsafe_ptr()
-    for ci in range(N_CHUNKS + 1):
-        hcp[ci] = cpu_chunks[ci]
-    var dev_chunks_buf = ctx.enqueue_create_buffer[DType.int64](N_CHUNKS + 1)
-    ctx.enqueue_copy(dev_chunks_buf, host_chunks_buf)
+#     var host_chunks_buf = ctx.enqueue_create_host_buffer[DType.int64](N_CHUNKS + 1)
+#     ctx.synchronize()
+#     var hcp = host_chunks_buf.unsafe_ptr()
+#     for ci in range(N_CHUNKS + 1):
+#         hcp[ci] = cpu_chunks[ci]
+#     var dev_chunks_buf = ctx.enqueue_create_buffer[DType.int64](N_CHUNKS + 1)
+#     ctx.enqueue_copy(dev_chunks_buf, host_chunks_buf)
 
-    var dev_result_buf = ctx.enqueue_create_buffer[DType.int64](RESULT_SIZE)
-    ctx.synchronize()
+#     var dev_result_buf = ctx.enqueue_create_buffer[DType.int64](RESULT_SIZE)
+#     ctx.synchronize()
 
-    var dev_data   = LayoutTensor[DType.uint8, data_layout](dev_data_buf)
-    var dev_chunks = LayoutTensor[DType.int64, chunks_layout](dev_chunks_buf)
-    var dev_result = LayoutTensor[DType.int64, result_layout](dev_result_buf)
+#     var dev_data   = LayoutTensor[DType.uint8, data_layout](dev_data_buf)
+#     var dev_chunks = LayoutTensor[DType.int64, chunks_layout](dev_chunks_buf)
+#     var dev_result = LayoutTensor[DType.int64, result_layout](dev_result_buf)
 
-    # grid_dim=N_CHUNKS, block_dim=1: one thread per chunk.
-    # Deliberate underutilisation to measure per-thread GPU throughput baseline.
-    ctx.enqueue_function[gpu_parse_kernel, gpu_parse_kernel](
-        dev_data,
-        dev_chunks,
-        dev_result,
-        grid_dim=N_CHUNKS,
-        block_dim=1,
-    )
-    ctx.synchronize()
+#     # grid_dim=N_CHUNKS, block_dim=1: one thread per chunk.
+#     # Deliberate underutilisation to measure per-thread GPU throughput baseline.
+#     ctx.enqueue_function[gpu_parse_kernel, gpu_parse_kernel](
+#         dev_data,
+#         dev_chunks,
+#         dev_result,
+#         grid_dim=N_CHUNKS,
+#         block_dim=1,
+#     )
+#     ctx.synchronize()
 
-    # Merge: read result buffer, resolve names via original mmap ptr + name_offset.
-    # Using mapped.ptr (MutExternalOrigin) avoids any unsafe origin casting.
-    var final_map = PerfectStationMap[MAP_TRACKER=EmptyMapMetrics]()
+#     # Merge: read result buffer, resolve names via original mmap ptr + name_offset.
+#     # Using mapped.ptr (MutExternalOrigin) avoids any unsafe origin casting.
+#     var final_map = PerfectStationMap[MAP_TRACKER=EmptyMapMetrics]()
 
-    with dev_result_buf.map_to_host() as host_result:
-        var result_view = LayoutTensor[DType.int64, result_layout](host_result)
-        for chunk_id in range(N_CHUNKS):
-            var res_base = chunk_id * GPU_CAPACITY * ENTRY_WORDS
-            for slot in range(GPU_CAPACITY):
-                var e     = res_base + slot * ENTRY_WORDS
-                var count = Int(rebind[Scalar[DType.int64]](result_view[e + 3]))
-                if count == 0:
-                    continue
+#     with dev_result_buf.map_to_host() as host_result:
+#         var result_view = LayoutTensor[DType.int64, result_layout](host_result)
+#         for chunk_id in range(N_CHUNKS):
+#             var res_base = chunk_id * GPU_CAPACITY * ENTRY_WORDS
+#             for slot in range(GPU_CAPACITY):
+#                 var e     = res_base + slot * ENTRY_WORDS
+#                 var count = Int(rebind[Scalar[DType.int64]](result_view[e + 3]))
+#                 if count == 0:
+#                     continue
 
-                var name_off = Int(rebind[Scalar[DType.int64]](result_view[e + 4]))
-                var name_len = Int(rebind[Scalar[DType.int64]](result_view[e + 5]))
-                var name_ptr = mapped.ptr + name_off
+#                 var name_off = Int(rebind[Scalar[DType.int64]](result_view[e + 4]))
+#                 var name_len = Int(rebind[Scalar[DType.int64]](result_view[e + 5]))
+#                 var name_ptr = mapped.ptr + name_off
 
-                var stats = StationStats(
-                    Int(rebind[Scalar[DType.int64]](result_view[e + 0]))
-                )
-                stats.max   = Int(rebind[Scalar[DType.int64]](result_view[e + 1]))
-                stats.sum   = Int(rebind[Scalar[DType.int64]](result_view[e + 2]))
-                stats.count = count
+#                 var stats = StationStats(
+#                     Int(rebind[Scalar[DType.int64]](result_view[e + 0]))
+#                 )
+#                 stats.max   = Int(rebind[Scalar[DType.int64]](result_view[e + 1]))
+#                 stats.sum   = Int(rebind[Scalar[DType.int64]](result_view[e + 2]))
+#                 stats.count = count
 
-                final_map.update_from_stats(name_ptr, name_len, stats)
+#                 final_map.update_from_stats(name_ptr, name_len, stats)
 
-    final_map.print_sorted()
-    mapped.close()
+#     final_map.print_sorted()
+#     mapped.close()

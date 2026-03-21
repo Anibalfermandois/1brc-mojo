@@ -1,10 +1,11 @@
 from std.time import perf_counter_ns
 from std.sys.info import num_logical_cores
 from std.algorithm import parallelize
-from metrics import MapTracker, ParserTracker
-from perfect_hashmap import PerfectStationMap
-from parser import parse_chunk
-from mmap import madvise_range, MADV_DONTNEED
+from misc.metrics import MapTracker, ParserTracker
+from engine.perfect_hashmap import PerfectStationMap
+from engine.parser import parse_chunk
+from IO.mmap import madvise_range, MADV_DONTNEED
+from IO.streaming import FileHandle, DoubleBufferedStream
 
 def run_analysis[M: MapTracker, P: ParserTracker](
     filename: String,
@@ -31,12 +32,23 @@ def run_analysis[M: MapTracker, P: ParserTracker](
     fn collect_metrics(tid: Int):
         var start      = chunk_starts[tid]
         var end        = chunk_starts[tid + 1]
-        var chunk_ptr  = ptr + start
-        var chunk_len  = end - start
         var maps_ptr   = final_maps.unsafe_ptr()
         var tpm_ptr    = thread_parser_metrics.unsafe_ptr()
         
-        parse_chunk[P, M](maps_ptr[tid], chunk_ptr, chunk_len, tpm_ptr[tid])
+        if use_streaming:
+            try:
+                var handle = FileHandle(filename)
+                handle.set_nocache()
+                var stream = DoubleBufferedStream(handle)
+                stream.process_range[P,M](maps_ptr[tid], start, end, tpm_ptr[tid])
+                stream.close()
+                handle.close()
+            except e:
+                print("Analysis Error in thread ", tid, ": ", e)
+        else:
+            var chunk_ptr  = ptr + start
+            var chunk_len  = end - start
+            parse_chunk[P, M](maps_ptr[tid], chunk_ptr, chunk_len, tpm_ptr[tid])
     
     parallelize[collect_metrics](num_threads)
     var t1 = perf_counter_ns()
