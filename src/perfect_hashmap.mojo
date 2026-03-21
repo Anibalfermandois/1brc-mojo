@@ -1,5 +1,6 @@
 from std.memory import UnsafePointer, alloc
 from metrics import MapTracker, MapMetrics, EmptyMapMetrics
+from std.sys.intrinsics import likely, unlikely, assume
 
 
 @fieldwise_init
@@ -29,9 +30,9 @@ struct StationStats(Copyable, ImplicitlyCopyable, Movable):
 
     @always_inline
     def update(mut self, temp: Int):
-        if temp < self.min:
+        if unlikely(temp < self.min):
             self.min = temp
-        if temp > self.max:
+        if unlikely(temp > self.max):
             self.max = temp
         self.sum += temp
         self.count += 1
@@ -84,7 +85,7 @@ struct PerfectStationMap[
 
     def __init__(out self, *, copy: Self):
         self.data = alloc[MapEntry](Self.CAPACITY)
-        for i in range(Self.CAPACITY):
+        comptime for i in range(Self.CAPACITY):
             self.data[i] = copy.data[i]
         self.size = copy.size
         self.metrics = copy.metrics
@@ -114,8 +115,10 @@ struct PerfectStationMap[
 
         comptime SHIFT_U64 = UInt64(Self.SHIFT)
         var idx = Int((k * Self.MULTIPLIER) >> SHIFT_U64)
+        assume(idx >= 0)
+        assume(idx < Self.CAPACITY)
 
-        if self.data[idx].stats.count > 0:
+        if likely(self.data[idx].stats.count > 0):
             comptime if Self.MAP_TRACKER.ACTIVE:
                 var existing_ptr = self.data[idx].ptr
                 var existing_len = self.data[idx].length

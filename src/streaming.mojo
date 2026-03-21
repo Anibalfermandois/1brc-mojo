@@ -12,6 +12,7 @@ from std.os.fstat import stat
 from metrics import ParserTracker, MapTracker
 from perfect_hashmap import PerfectStationMap
 from parser import parse_chunk
+from std.sys.intrinsics import unlikely
 
 comptime O_RDONLY: Int32 = 0
 
@@ -38,7 +39,7 @@ struct FileHandle(Copyable, ImplicitlyCopyable, Movable):
             Int32(O_RDONLY),
             Int32(0),
         )
-        if self._fd < 0:
+        if unlikely(self._fd < 0):
             raise Error("streaming: open() failed for: " + path)
 
     def pread(self, buf: UnsafePointer[UInt8, MutExternalOrigin], count: Int, offset: Int) -> Int:
@@ -138,7 +139,7 @@ struct DoubleBufferedStream[
             
             # 2. Read next block into active buffer (after any existing tail)
             var to_read = Self.BLOCK_SIZE
-            if current_pos + to_read > self.handle.size:
+            if unlikely(current_pos + to_read > self.handle.size):
                  to_read = self.handle.size - current_pos
             
             var bytes_read = 0
@@ -151,7 +152,7 @@ struct DoubleBufferedStream[
             # 3. Find boundary of last full line
             var last_nl = find_last_newline(active_buf, total_len)
             
-            if last_nl == -1:
+            if unlikely(last_nl == -1):
                 # Pathological city name > 1MB? Unlikely for 1BRC but handle it.
                 # If we don't find a newline, we just read MORE into the SAME buffer.
                 # In 1BRC max row is ~100 bytes, so BLOCK_SIZE=1MB is plenty.

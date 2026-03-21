@@ -1,6 +1,7 @@
 from std.memory import UnsafePointer
 from std.sys.info import simd_width_of
 from std.bit import count_trailing_zeros
+from std.sys.intrinsics import likely, assume, expect
 from metrics import ParserTracker, ParserMetrics, EmptyParserMetrics, MapTracker
 from perfect_hashmap import PerfectStationMap
 
@@ -33,6 +34,8 @@ def parse_row[
     var c4_is_semi = Int(c4 == ASCII_SEMI)
     var offset = 6 - c5_is_semi - (c4_is_semi * 2)
     var name_len = nl - offset - name_start
+    assume(name_len > 0)
+    assume(name_len < 128)
 
     var c4_val = c4 & 0x0F
     var has_tens = Int(c4_val <= 9)
@@ -71,7 +74,7 @@ def parse_chunk[
         var chunk = ptr.load[width=width](i)
         var mask: SIMD[DType.bool, width] = chunk.eq(nl_vec)
 
-        if mask.reduce_or():
+        if likely(mask.reduce_or()):
             comptime if T.ACTIVE:
                 metrics.record_simd_hit()
             comptime if width == 16:
@@ -100,6 +103,7 @@ def parse_chunk[
                 while final_mask != 0:
                     var bit_idx = Int(count_trailing_zeros(final_mask))
                     var nl = i + bit_idx
+                    
                     parse_row(map, ptr, row_start, nl, metrics)
                     row_start = nl + 1
                     final_mask &= final_mask - 1

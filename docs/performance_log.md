@@ -13,3 +13,4 @@ This file tracks the performance of different optimizations over time. New resul
 | 2026-03-20 | Post-Cleanup | 300M | 612ms | 666.67M | After removing experimental vectorized code |
 | 2026-03-20 | Streaming I/O | 300M | 624ms | 652.17M | Explicit pread + Double-buffering |
 | 2026-03-20 | Streaming I/O | 600M | 6993ms | 112.71M | Significant gain over mmap on MacOS (600M=7.8GB) |
+| 2026-03-20 | Comptime Opt | 300M | 632ms | 638.30M | Added Likely and unlikely |
