@@ -5,35 +5,36 @@ from .stations_data import PERFECT_MULTIPLIER, PERFECT_CAPACITY, PERFECT_SHIFT
 
 @fieldwise_init
 struct StationStats(Copyable, ImplicitlyCopyable, Movable):
-    var min: Int
-    var max: Int
     var sum: Int
-    var count: Int
+    var count: Int32
+    var min: Int16
+    var max: Int16
 
     def __init__(out self, initial_temp: Int):
-        self.min = initial_temp
-        self.max = initial_temp
         self.sum = initial_temp
         self.count = 1
+        self.min = Int16(initial_temp)
+        self.max = Int16(initial_temp)
 
     def __init__(out self, *, copy: Self):
-        self.min = copy.min
-        self.max = copy.max
         self.sum = copy.sum
         self.count = copy.count
+        self.min = copy.min
+        self.max = copy.max
 
     def __init__(out self, *, deinit take: Self):
-        self.min = take.min
-        self.max = take.max
         self.sum = take.sum
         self.count = take.count
+        self.min = take.min
+        self.max = take.max
 
     @always_inline
     def update(mut self, temp: Int):
-        if unlikely(temp < self.min):
-            self.min = temp
-        if unlikely(temp > self.max):
-            self.max = temp
+        var t16 = Int16(temp)
+        if unlikely(t16 < self.min):
+            self.min = t16
+        if unlikely(t16 > self.max):
+            self.max = t16
         self.sum += temp
         self.count += 1
 
@@ -103,15 +104,26 @@ struct PerfectStationMap[
         length: Int,
         temp: Int,
     ):
+        assume(length >= 3)
+        var head = UInt64(ptr.bitcast[UInt32]().load())
+        var tail_byte = UInt64(ptr[length - 3])
+        self.update_or_insert_precomputed(ptr, length, temp, head, tail_byte)
+
+    @always_inline
+    def update_or_insert_precomputed(
+        mut self,
+        ptr: UnsafePointer[UInt8, MutExternalOrigin],
+        length: Int,
+        temp: Int,
+        head: UInt64,
+        tail_byte: UInt64,
+    ):
         comptime if Self.MAP_TRACKER.ACTIVE:
             self.metrics.record_lookup()
 
-        assume(length >= 3)
-        # 2 effective loads: one uint32 for b[0..2], one byte for b[-3]
-        var head = UInt64(ptr.bitcast[UInt32]().load())
         var val = UInt64(length)
-        val |= (head & 0xFFFFFF) << 8    # b[0] at bits 8-15, b[1] at 16-23, b[2] at 24-31
-        val |= UInt64(ptr[length - 3]) << 32
+        val |= (head & 0xFFFFFF) << 8
+        val |= tail_byte << 32
 
         var idx = Int((val * Self.MULTIPLIER) >> UInt64(Self.SHIFT))
         assume(idx >= 0)
