@@ -82,7 +82,7 @@ def parse_chunk[
         var m2 = c2.eq(nl_vec)
         var m3 = c3.eq(nl_vec)
 
-        if likely(m0.reduce_or() or m1.reduce_or() or m2.reduce_or() or m3.reduce_or()):
+        if likely((m0 | m1 | m2 | m3).reduce_or()):
             comptime u16_powers = SIMD[DType.uint16, 16](1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768)
             
             if m0.reduce_or():
