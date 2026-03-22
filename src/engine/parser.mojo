@@ -68,6 +68,61 @@ def parse_chunk[
     var i = 0
     var row_start = 0
 
+    while i + 64 <= size:
+        comptime if T.ACTIVE:
+            for _ in range(4): metrics.record_simd_iteration()
+
+        var c0 = ptr.load[width=16](i)
+        var c1 = ptr.load[width=16](i + 16)
+        var c2 = ptr.load[width=16](i + 32)
+        var c3 = ptr.load[width=16](i + 48)
+
+        var m0 = c0.eq(nl_vec)
+        var m1 = c1.eq(nl_vec)
+        var m2 = c2.eq(nl_vec)
+        var m3 = c3.eq(nl_vec)
+
+        if likely(m0.reduce_or() or m1.reduce_or() or m2.reduce_or() or m3.reduce_or()):
+            comptime u16_powers = SIMD[DType.uint16, 16](1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768)
+            
+            if m0.reduce_or():
+                var final_mask = Int((m0.cast[DType.uint16]() * u16_powers).reduce_add())
+                while final_mask != 0:
+                    var bit_idx = Int(count_trailing_zeros(final_mask))
+                    var nl = i + bit_idx
+                    parse_row(map, ptr, row_start, nl, metrics)
+                    row_start = nl + 1
+                    final_mask &= final_mask - 1
+                    comptime if T.ACTIVE: metrics.record_row_simd()
+            if m1.reduce_or():
+                var final_mask = Int((m1.cast[DType.uint16]() * u16_powers).reduce_add())
+                while final_mask != 0:
+                    var bit_idx = Int(count_trailing_zeros(final_mask))
+                    var nl = i + 16 + bit_idx
+                    parse_row(map, ptr, row_start, nl, metrics)
+                    row_start = nl + 1
+                    final_mask &= final_mask - 1
+                    comptime if T.ACTIVE: metrics.record_row_simd()
+            if m2.reduce_or():
+                var final_mask = Int((m2.cast[DType.uint16]() * u16_powers).reduce_add())
+                while final_mask != 0:
+                    var bit_idx = Int(count_trailing_zeros(final_mask))
+                    var nl = i + 32 + bit_idx
+                    parse_row(map, ptr, row_start, nl, metrics)
+                    row_start = nl + 1
+                    final_mask &= final_mask - 1
+                    comptime if T.ACTIVE: metrics.record_row_simd()
+            if m3.reduce_or():
+                var final_mask = Int((m3.cast[DType.uint16]() * u16_powers).reduce_add())
+                while final_mask != 0:
+                    var bit_idx = Int(count_trailing_zeros(final_mask))
+                    var nl = i + 48 + bit_idx
+                    parse_row(map, ptr, row_start, nl, metrics)
+                    row_start = nl + 1
+                    final_mask &= final_mask - 1
+                    comptime if T.ACTIVE: metrics.record_row_simd()
+        i += 64
+
     while i + width <= size:
         comptime if T.ACTIVE:
             metrics.record_simd_iteration()
@@ -118,17 +173,6 @@ def parse_chunk[
                         row_start = nl + 1
                         comptime if T.ACTIVE:
                             metrics.record_row_simd()
-        else:
-            comptime if T.ACTIVE:
-                var s = String("")
-                for k in range(width):
-                    var c = ptr[i + k]
-                    if c < 32 or c > 126:
-                        s += "."
-                    else:
-                        s += chr(Int(c))
-                metrics.record_missed_block(s)
-
         i += width
 
     while i < size:
