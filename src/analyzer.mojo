@@ -64,8 +64,10 @@ def run_analysis[M: MapTracker, P: ParserTracker](
     var final_merged_map = PerfectStationMap[MAP_TRACKER=M]()
     
     for i in range(num_threads):
-        final_merged_map.merge_from(final_maps[i])
-        total_parser_metrics.merge_from(thread_parser_metrics[i])
+        ref m = final_maps[i]
+        final_merged_map.merge_from(m)
+        ref p = thread_parser_metrics[i]
+        total_parser_metrics.merge_from(p)
 
     print("\n── Deep Analysis Results ──────────────────────────────────────────────")
     total_parser_metrics.print_summary(size, parse_s)

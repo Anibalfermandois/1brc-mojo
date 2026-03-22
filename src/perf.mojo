@@ -155,7 +155,8 @@ def run_pipeline[
     var t0_merge = perf_counter_ns()
     var final_map = PerfectStationMap[MAP_TRACKER=M]()
     for i in range(num_threads):
-        final_map.merge_from(maps[i])
+        ref m = maps[i]
+        final_map.merge_from(m)
     var t1_merge = perf_counter_ns()
     
     comptime if not no_print:

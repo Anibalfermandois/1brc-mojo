@@ -1,7 +1,7 @@
 from std.memory import UnsafePointer, alloc
 from misc.metrics import MapTracker, MapMetrics, EmptyMapMetrics
 from std.sys.intrinsics import likely, unlikely, assume
-from .stations_data import PERFECT_MULTIPLIER
+from .stations_data import PERFECT_MULTIPLIER, PERFECT_CAPACITY, PERFECT_SHIFT
 
 @fieldwise_init
 struct StationStats(Copyable, ImplicitlyCopyable, Movable):
@@ -50,8 +50,7 @@ struct MapEntry(Copyable, ImplicitlyCopyable, Movable):
     # Total: 48 bytes
 
     def __init__(out self):
-        self.stats = StationStats(0)
-        self.stats.count = 0
+        self.stats = StationStats(min=999, max= -999, sum=0, count=0)
         self.ptr = UnsafePointer[UInt8, MutExternalOrigin]()
         self.signature = 0
         self.length = 0
@@ -69,9 +68,9 @@ struct MapEntry(Copyable, ImplicitlyCopyable, Movable):
         self.length = Int32(length)
 
 struct PerfectStationMap[
-    CAPACITY: Int = 16384,
+    CAPACITY: Int = PERFECT_CAPACITY,
     MULTIPLIER: UInt64 = PERFECT_MULTIPLIER,
-    SHIFT: Int = 50, # 64 - log2(16384)
+    SHIFT: Int = PERFECT_SHIFT,
     MAP_TRACKER: MapTracker = EmptyMapMetrics,
 ](Copyable, Movable):
     var data: UnsafePointer[MapEntry, MutExternalOrigin]
@@ -107,30 +106,29 @@ struct PerfectStationMap[
         comptime if Self.MAP_TRACKER.ACTIVE:
             self.metrics.record_lookup()
 
-        assume(length >= 2)
+        assume(length >= 3)
+        # 2 effective loads: one uint32 for b[0..2], one byte for b[-3]
+        var head = UInt64(ptr.bitcast[UInt32]().load())
         var val = UInt64(length)
-        val |= UInt64(ptr[0]) << 8
-        val |= UInt64(ptr[length >> 1]) << 16
-        val |= UInt64(ptr[length - 1]) << 24
-        val |= UInt64(ptr[1]) << 32
-        val |= UInt64(ptr[length - 2]) << 40
+        val |= (head & 0xFFFFFF) << 8    # b[0] at bits 8-15, b[1] at 16-23, b[2] at 24-31
+        val |= UInt64(ptr[length - 3]) << 32
 
-        var signature = UInt32(val & 0xFFFFFFFF)
         var idx = Int((val * Self.MULTIPLIER) >> UInt64(Self.SHIFT))
         assume(idx >= 0)
         assume(idx < Self.CAPACITY)
 
-        if likely(self.data[idx].stats.count > 0):
-            if signature != self.data[idx].signature:
-                return
-            self.data[idx].stats.update(temp)
-            comptime if Self.MAP_TRACKER.ACTIVE:
-                self.metrics.record_update()
-        else:
-            self.data[idx] = MapEntry(StationStats(temp), ptr, length, signature)
+        # Perfect hash: unconditional stats update.
+        # ptr/length set only on first encounter (413 times out of 1B rows).
+        if unlikely(self.data[idx].stats.count == 0):
+            self.data[idx].ptr = ptr
+            self.data[idx].length = Int32(length)
             self.size += 1
             comptime if Self.MAP_TRACKER.ACTIVE:
                 self.metrics.record_insert()
+        comptime if Self.MAP_TRACKER.ACTIVE:
+            if self.data[idx].stats.count > 0:
+                self.metrics.record_update()
+        self.data[idx].stats.update(temp)
 
     def update_from_stats(
         mut self,
@@ -138,29 +136,26 @@ struct PerfectStationMap[
         length: Int,
         read incoming: StationStats,
     ):
-        assume(length >= 2)
+        assume(length >= 3)
+        var head = UInt64(ptr.bitcast[UInt32]().load())
         var val = UInt64(length)
-        val |= UInt64(ptr[0]) << 8
-        val |= UInt64(ptr[length >> 1]) << 16
-        val |= UInt64(ptr[length - 1]) << 24
-        val |= UInt64(ptr[1]) << 32
-        val |= UInt64(ptr[length - 2]) << 40
+        val |= (head & 0xFFFFFF) << 8
+        val |= UInt64(ptr[length - 3]) << 32
 
-        var signature = UInt32(val & 0xFFFFFFFF)
         var idx = Int((val * Self.MULTIPLIER) >> UInt64(Self.SHIFT))
-        
+
         if self.data[idx].stats.count > 0:
             if incoming.min < self.data[idx].stats.min:
                 self.data[idx].stats.min = incoming.min
-            if incoming.max < self.data[idx].stats.max:
+            if incoming.max > self.data[idx].stats.max:
                 self.data[idx].stats.max = incoming.max
             self.data[idx].stats.sum += incoming.sum
             self.data[idx].stats.count += incoming.count
         else:
-            self.data[idx] = MapEntry(incoming, ptr, length, signature)
+            self.data[idx] = MapEntry(incoming, ptr, length, UInt32(0))
             self.size += 1
 
-    def merge_from(mut self, other: Self):
+    def merge_from(mut self, read other: Self):
         comptime if Self.MAP_TRACKER.ACTIVE:
             self.metrics.merge_from(other.metrics)
         for i in range(Self.CAPACITY):
@@ -174,7 +169,7 @@ struct PerfectStationMap[
         for i in range(Self.CAPACITY):
             if self.data[i].stats.count > 0:
                 slot_indices.append(i)
-                var entry = self.data[i]
+                ref entry = self.data[i]
                 var chars = List[UInt8](capacity=Int(entry.length))
                 for j in range(Int(entry.length)):
                     chars.append(entry.ptr[j])

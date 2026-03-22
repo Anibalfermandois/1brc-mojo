@@ -52,4 +52,11 @@ This document records optimization attempts that did not yield the expected resu
 - **Observation:** Benchmarking 100M rows (1.3GB) showed ~714M rows/s, while 600M rows (8.2GB) initially plummeted to ~85M rows/s.
 - **Cause:** On a machine with 4.8GB RAM, `mmap` triggered severe page-cache trashing once the file size exceeded physical memory.
 - **Resolution:** Lowered the `STREAMING_THRESHOLD` to 4GB. Using explicit `pread` with `F_NOCACHE` recovered the performance to ~326M rows/s (3.8x gain).
-- **Lesson:** On macOS, explicit streaming is mandatory as soon as the dataset exceeds half of the available physical RAM.
+## Sub-8192 Hash Table Capacity
+- **Idea:** Scale the perfect hash table capacity down from 16384/8192 to 4096 to increase cache density (using multiplier `3691286356690509567`).
+- **Result:** ~2-6% regression (highly dependent on the specific multiplier).
+- **Reason:** For this specific workload (413 active stations), the working set fits completely in L1 D-Cache regardless of the total table size. 413 active entries × 48 bytes = ~20 KB, well within the 128 KB L1D of Apple M2.
+- **Analysis:** 
+    1. **Red Herring:** Shrinking the table from 16384 to 4096 doesn't make the *hot set* any smaller; only the same 413 slots are eve.r accessed. 
+    2. **Multiplier Quality:** Different multipliers distribute the stations to different physical addresses. A regression is more likely due to a multiplier accidentally creating L1 cache set conflicts between frequently co-accessed stations, rather than the capacity itself.
+- **Lesson:** When the working set already fits in the fastest cache level, further shrinking the data structure provides no theoretical benefit and may introduce layout-dependent noise. Stick to the capacity and multiplier that yields the best stable benchmark (currently 16384 slots).

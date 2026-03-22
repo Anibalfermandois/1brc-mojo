@@ -17,3 +17,8 @@ This file tracks the performance of different optimizations over time. New resul
 | 2026-03-20 | Aligned Streaming | 100M | 137ms | 729.92M | With 4MB blocks and F_NOCACHE |
 | 2026-03-20 | Lookahead v2 | 600M | 7055ms | 85.05M | Sustainable streaming beyond 4.8GB RAM |
 | 2026-03-20 | Gap Recovery | 600M | 1836ms | 326.73M | Threshold lowered to 4GB (3.8x gain over mmap) |
+| 2026-03-21 | Ownership Opt | 300M | 413ms | 725.82M | Idiomatic ownership and `ref` in map merge |
+| 2026-03-21 | No Signature | 600M | 1691ms | 354.82M | Removed signature check from hot path |
+| 2026-03-21 | Perfect Hash | 600M | 1733ms | 354.82M | made table smaller |
+| 2026-03-21 | No Signature | 600M | 1630ms | 354.82M | No signature + no computer ram pressure |
+| 2026-03-22 | 2-Load Hash | 600M | 1583ms | 354.82M | 2-Load Hash |

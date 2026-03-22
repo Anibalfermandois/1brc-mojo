@@ -16,7 +16,7 @@ trait MapTracker(Copyable, ImplicitlyCopyable, Movable):
     def get_total_probes(self) -> Int: ...
     def get_max_probe_run(self) -> Int: ...
     def print_summary(self): ...
-    def merge_from(mut self, other: Self): ...
+    def merge_from(mut self, read other: Self): ...
 
 struct MapMetrics(MapTracker, Copyable, ImplicitlyCopyable, Movable):
     comptime ACTIVE = True
@@ -63,7 +63,7 @@ struct MapMetrics(MapTracker, Copyable, ImplicitlyCopyable, Movable):
             print("  Total Lookups:  ", self.total_lookups)
             print("  Status: Perfect! No collisions detected.")
 
-    def merge_from(mut self, other: Self):
+    def merge_from(mut self, read other: Self):
         self.total_lookups += other.total_lookups
         self.total_inserts += other.total_inserts
         self.total_updates += other.total_updates
@@ -90,7 +90,7 @@ struct EmptyMapMetrics(MapTracker, Copyable, ImplicitlyCopyable, Movable):
     def get_total_probes(self) -> Int: return 0
     def get_max_probe_run(self) -> Int: return 0
     def print_summary(self): pass
-    def merge_from(mut self, other: Self): pass
+    def merge_from(mut self, read other: Self): pass
 
 # ── Parser Analysis ───────────────────────────────────────────
 
@@ -111,7 +111,7 @@ trait ParserTracker(Copyable, Movable, ImplicitlyCopyable):
     def get_max_name_len(self) -> Int: ...
     def get_missed_blocks(self) -> List[String]: ...
     def print_summary(self, size: Int, parse_s: Float64): ...
-    def merge_from(mut self, other: Self): ...
+    def merge_from(mut self, read other: Self): ...
 
 struct ParserMetrics(Copyable, Movable, ParserTracker):
     comptime ACTIVE = True
@@ -220,7 +220,7 @@ struct ParserMetrics(Copyable, Movable, ParserTracker):
             for i in range(len(self.missed_blocks)):
                 print("  Sample ", i + 1, ": [", self.missed_blocks[i], "]")
 
-    def merge_from(mut self, other: Self):
+    def merge_from(mut self, read other: Self):
         self.simd_iterations += other.simd_iterations
         self.simd_hits += other.simd_hits
         self.rows_simd += other.rows_simd
@@ -285,5 +285,5 @@ struct EmptyParserMetrics(Copyable, Movable, ParserTracker):
     def print_summary(self, size: Int, parse_s: Float64):
         pass
 
-    def merge_from(mut self, other: Self):
+    def merge_from(mut self, read other: Self):
         pass
