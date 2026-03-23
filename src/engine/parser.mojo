@@ -87,8 +87,8 @@ def parse_chunk[
             if m0.reduce_or():
                 var bytes = m0.cast[DType.uint8]() & 1
                 var u64 = bitcast[DType.uint64, 2](bytes)
-                var res0 = (u64[0] * 0x8040201008040201) >> 56
-                var res1 = (u64[1] * 0x8040201008040201) >> 56
+                var res0 = (u64[0] * 0x0102040810204080) >> 56
+                var res1 = (u64[1] * 0x0102040810204080) >> 56
                 var final_mask = Int(res0) | (Int(res1) << 8)
                 var bit_idx = Int(count_trailing_zeros(final_mask))
                 var nl = i + bit_idx
@@ -106,8 +106,8 @@ def parse_chunk[
             if m1.reduce_or():
                 var bytes = m1.cast[DType.uint8]() & 1
                 var u64 = bitcast[DType.uint64, 2](bytes)
-                var res0 = (u64[0] * 0x8040201008040201) >> 56
-                var res1 = (u64[1] * 0x8040201008040201) >> 56
+                var res0 = (u64[0] * 0x0102040810204080) >> 56
+                var res1 = (u64[1] * 0x0102040810204080) >> 56
                 var final_mask = Int(res0) | (Int(res1) << 8)
                 var bit_idx = Int(count_trailing_zeros(final_mask))
                 var nl = i + 16 + bit_idx
@@ -125,8 +125,8 @@ def parse_chunk[
             if m2.reduce_or():
                 var bytes = m2.cast[DType.uint8]() & 1
                 var u64 = bitcast[DType.uint64, 2](bytes)
-                var res0 = (u64[0] * 0x8040201008040201) >> 56
-                var res1 = (u64[1] * 0x8040201008040201) >> 56
+                var res0 = (u64[0] * 0x0102040810204080) >> 56
+                var res1 = (u64[1] * 0x0102040810204080) >> 56
                 var final_mask = Int(res0) | (Int(res1) << 8)
                 var bit_idx = Int(count_trailing_zeros(final_mask))
                 var nl = i + 32 + bit_idx
@@ -144,8 +144,8 @@ def parse_chunk[
             if m3.reduce_or():
                 var bytes = m3.cast[DType.uint8]() & 1
                 var u64 = bitcast[DType.uint64, 2](bytes)
-                var res0 = (u64[0] * 0x8040201008040201) >> 56
-                var res1 = (u64[1] * 0x8040201008040201) >> 56
+                var res0 = (u64[0] * 0x0102040810204080) >> 56
+                var res1 = (u64[1] * 0x0102040810204080) >> 56
                 var final_mask = Int(res0) | (Int(res1) << 8)
                 var bit_idx = Int(count_trailing_zeros(final_mask))
                 var nl = i + 48 + bit_idx
@@ -173,27 +173,11 @@ def parse_chunk[
             comptime if T.ACTIVE:
                 metrics.record_simd_hit()
             comptime if width == 16:
-                comptime u16_powers = SIMD[DType.uint16, 16](
-                    1,
-                    2,
-                    4,
-                    8,
-                    16,
-                    32,
-                    64,
-                    128,
-                    256,
-                    512,
-                    1024,
-                    2048,
-                    4096,
-                    8192,
-                    16384,
-                    32768,
-                )
-                var final_mask = Int(
-                    (mask.cast[DType.uint16]() * u16_powers).reduce_add()
-                )
+                var as_u8 = mask.cast[DType.uint8]() & 1
+                var as_u64 = bitcast[DType.uint64, 2](as_u8)
+                var res0 = (as_u64[0] * 0x0102040810204080) >> 56
+                var res1 = (as_u64[1] * 0x0102040810204080) >> 56
+                var final_mask = Int(res0) | (Int(res1) << 8)
 
                 while final_mask != 0:
                     var bit_idx = Int(count_trailing_zeros(final_mask))
