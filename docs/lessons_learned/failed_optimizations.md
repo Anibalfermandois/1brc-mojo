@@ -60,3 +60,8 @@ This document records optimization attempts that did not yield the expected resu
     1. **Red Herring:** Shrinking the table from 16384 to 4096 doesn't make the *hot set* any smaller; only the same 413 slots are eve.r accessed. 
     2. **Multiplier Quality:** Different multipliers distribute the stations to different physical addresses. A regression is more likely due to a multiplier accidentally creating L1 cache set conflicts between frequently co-accessed stations, rather than the capacity itself.
 - **Lesson:** When the working set already fits in the fastest cache level, further shrinking the data structure provides no theoretical benefit and may introduce layout-dependent noise. Stick to the capacity and multiplier that yields the best stable benchmark (currently 16384 slots).
+
+## Tight Loop Pipelining
+- **Idea:** Pipeline the 64-byte `parse_chunk` loop by prefetching the *next* block of `c0..c3` SIMD vectors from memory *while* processing the newlines of the *current* block, aiming to overlap memory latency with parsing computation.
+- **Result:** Neutral to slightly worse (~429ms vs 424ms baseline).
+- **Reason:** Apple Silicon's Out-of-Order execution engine and hardware prefetcher are highly optimized for sequential, unrolled memory accesses. Eagerly issuing loads artificially pressured registers and instruction scheduling, disrupting the hardware's own pipelining without yielding any memory stall savings.

@@ -13,7 +13,7 @@ shift
 
 # ── Configuration ─────────────────────────────────────────────
 FILE="${1:-measurements_300m.txt}"
-RUNS="${2:-5}"
+RUNS="${2:-10}"
 BIN="./bin/perf_bin"
 
 # ── Validation & Build ────────────────────────────────────────

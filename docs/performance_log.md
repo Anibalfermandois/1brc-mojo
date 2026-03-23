@@ -22,3 +22,6 @@ This file tracks the performance of different optimizations over time. New resul
 | 2026-03-21 | Perfect Hash | 600M | 1733ms | 354.82M | made table smaller |
 | 2026-03-21 | No Signature | 600M | 1630ms | 354.82M | No signature + no computer ram pressure |
 | 2026-03-22 | 2-Load Hash | 600M | 1583ms | 354.82M | 2-Load Hash |
+| 2026-03-22 | 4x Unroll | 300M | 525ms | - | Unrolled SIMD loop |
+| 2026-03-22 | Combined Mask | 300M | 424ms | - | Combined reduction checks in unrolled loop |
+| 2026-03-22 | 32B MapEntry | 300M | 431ms | - | Reduced MapEntry from 48B to 32B (Min result) |

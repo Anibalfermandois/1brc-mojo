@@ -1,7 +1,7 @@
 from std.memory import UnsafePointer
 from std.sys.info import simd_width_of
 from std.bit import count_trailing_zeros
-from std.sys.intrinsics import likely, assume, expect
+from std.sys.intrinsics import likely, unlikely, assume, expect
 from misc.metrics import ParserTracker, ParserMetrics, EmptyParserMetrics, MapTracker
 from engine.perfect_hashmap import PerfectStationMap
 
@@ -87,40 +87,64 @@ def parse_chunk[
             
             if m0.reduce_or():
                 var final_mask = Int((m0.cast[DType.uint16]() * u16_powers).reduce_add())
-                while final_mask != 0:
-                    var bit_idx = Int(count_trailing_zeros(final_mask))
-                    var nl = i + bit_idx
-                    parse_row(map, ptr, row_start, nl, metrics)
-                    row_start = nl + 1
-                    final_mask &= final_mask - 1
-                    comptime if T.ACTIVE: metrics.record_row_simd()
+                var bit_idx = Int(count_trailing_zeros(final_mask))
+                var nl = i + bit_idx
+                parse_row(map, ptr, row_start, nl, metrics)
+                row_start = nl + 1
+                final_mask &= final_mask - 1
+                if unlikely(final_mask != 0):
+                    while final_mask != 0:
+                        bit_idx = Int(count_trailing_zeros(final_mask))
+                        nl = i + bit_idx
+                        parse_row(map, ptr, row_start, nl, metrics)
+                        row_start = nl + 1
+                        final_mask &= final_mask - 1
+                comptime if T.ACTIVE: metrics.record_row_simd()
             if m1.reduce_or():
                 var final_mask = Int((m1.cast[DType.uint16]() * u16_powers).reduce_add())
-                while final_mask != 0:
-                    var bit_idx = Int(count_trailing_zeros(final_mask))
-                    var nl = i + 16 + bit_idx
-                    parse_row(map, ptr, row_start, nl, metrics)
-                    row_start = nl + 1
-                    final_mask &= final_mask - 1
-                    comptime if T.ACTIVE: metrics.record_row_simd()
+                var bit_idx = Int(count_trailing_zeros(final_mask))
+                var nl = i + 16 + bit_idx
+                parse_row(map, ptr, row_start, nl, metrics)
+                row_start = nl + 1
+                final_mask &= final_mask - 1
+                if unlikely(final_mask != 0):
+                    while final_mask != 0:
+                        bit_idx = Int(count_trailing_zeros(final_mask))
+                        nl = i + 16 + bit_idx
+                        parse_row(map, ptr, row_start, nl, metrics)
+                        row_start = nl + 1
+                        final_mask &= final_mask - 1
+                comptime if T.ACTIVE: metrics.record_row_simd()
             if m2.reduce_or():
                 var final_mask = Int((m2.cast[DType.uint16]() * u16_powers).reduce_add())
-                while final_mask != 0:
-                    var bit_idx = Int(count_trailing_zeros(final_mask))
-                    var nl = i + 32 + bit_idx
-                    parse_row(map, ptr, row_start, nl, metrics)
-                    row_start = nl + 1
-                    final_mask &= final_mask - 1
-                    comptime if T.ACTIVE: metrics.record_row_simd()
+                var bit_idx = Int(count_trailing_zeros(final_mask))
+                var nl = i + 32 + bit_idx
+                parse_row(map, ptr, row_start, nl, metrics)
+                row_start = nl + 1
+                final_mask &= final_mask - 1
+                if unlikely(final_mask != 0):
+                    while final_mask != 0:
+                        bit_idx = Int(count_trailing_zeros(final_mask))
+                        nl = i + 32 + bit_idx
+                        parse_row(map, ptr, row_start, nl, metrics)
+                        row_start = nl + 1
+                        final_mask &= final_mask - 1
+                comptime if T.ACTIVE: metrics.record_row_simd()
             if m3.reduce_or():
                 var final_mask = Int((m3.cast[DType.uint16]() * u16_powers).reduce_add())
-                while final_mask != 0:
-                    var bit_idx = Int(count_trailing_zeros(final_mask))
-                    var nl = i + 48 + bit_idx
-                    parse_row(map, ptr, row_start, nl, metrics)
-                    row_start = nl + 1
-                    final_mask &= final_mask - 1
-                    comptime if T.ACTIVE: metrics.record_row_simd()
+                var bit_idx = Int(count_trailing_zeros(final_mask))
+                var nl = i + 48 + bit_idx
+                parse_row(map, ptr, row_start, nl, metrics)
+                row_start = nl + 1
+                final_mask &= final_mask - 1
+                if unlikely(final_mask != 0):
+                    while final_mask != 0:
+                        bit_idx = Int(count_trailing_zeros(final_mask))
+                        nl = i + 48 + bit_idx
+                        parse_row(map, ptr, row_start, nl, metrics)
+                        row_start = nl + 1
+                        final_mask &= final_mask - 1
+                comptime if T.ACTIVE: metrics.record_row_simd()
         i += 64
 
     while i + width <= size:

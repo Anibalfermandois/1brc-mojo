@@ -3,38 +3,36 @@ from misc.metrics import MapTracker, MapMetrics, EmptyMapMetrics
 from std.sys.intrinsics import likely, unlikely, assume
 from .stations_data import PERFECT_MULTIPLIER, PERFECT_CAPACITY, PERFECT_SHIFT
 
+
 @fieldwise_init
 struct StationStats(Copyable, ImplicitlyCopyable, Movable):
+    var min: Int
+    var max: Int
     var sum: Int
-    var count: Int32
-    var min: Int16
-    var max: Int16
+    var count: Int
 
     def __init__(out self, initial_temp: Int):
+        self.min = initial_temp
+        self.max = initial_temp
         self.sum = initial_temp
         self.count = 1
-        self.min = Int16(initial_temp)
-        self.max = Int16(initial_temp)
 
     def __init__(out self, *, copy: Self):
-        self.sum = copy.sum
-        self.count = copy.count
         self.min = copy.min
         self.max = copy.max
+        self.sum = copy.sum
+        self.count = copy.count
 
     def __init__(out self, *, deinit take: Self):
-        self.sum = take.sum
-        self.count = take.count
         self.min = take.min
         self.max = take.max
+        self.sum = take.sum
+        self.count = take.count
 
     @always_inline
     def update(mut self, temp: Int):
-        var t16 = Int16(temp)
-        if unlikely(t16 < self.min):
-            self.min = t16
-        if unlikely(t16 > self.max):
-            self.max = t16
+        self.min = min(self.min, temp)
+        self.max = max(self.max, temp)
         self.sum += temp
         self.count += 1
 
@@ -43,15 +41,16 @@ struct StationStats(Copyable, ImplicitlyCopyable, Movable):
             return 0.0
         return Float64(self.sum) / (Float64(self.count) * 10.0)
 
+
 struct MapEntry(Copyable, ImplicitlyCopyable, Movable):
-    var stats: StationStats # 32 bytes
-    var ptr: UnsafePointer[UInt8, MutExternalOrigin] # 8 bytes
-    var signature: UInt32 # 4 bytes
-    var length: Int32 # 4 bytes
+    var stats: StationStats  # 32 bytes
+    var ptr: UnsafePointer[UInt8, MutExternalOrigin]  # 8 bytes
+    var signature: UInt32  # 4 bytes
+    var length: Int32  # 4 bytes
     # Total: 48 bytes
 
     def __init__(out self):
-        self.stats = StationStats(min=999, max= -999, sum=0, count=0)
+        self.stats = StationStats(min=999, max=-999, sum=0, count=0)
         self.ptr = UnsafePointer[UInt8, MutExternalOrigin]()
         self.signature = 0
         self.length = 0
@@ -67,6 +66,7 @@ struct MapEntry(Copyable, ImplicitlyCopyable, Movable):
         self.ptr = ptr
         self.signature = signature
         self.length = Int32(length)
+
 
 struct PerfectStationMap[
     CAPACITY: Int = PERFECT_CAPACITY,
@@ -173,7 +173,9 @@ struct PerfectStationMap[
         for i in range(Self.CAPACITY):
             ref entry = other.data[i]
             if entry.stats.count > 0:
-                self.update_from_stats(entry.ptr, Int(entry.length), entry.stats)
+                self.update_from_stats(
+                    entry.ptr, Int(entry.length), entry.stats
+                )
 
     def print_sorted(self):
         var sorted_keys = List[String](capacity=self.size)
@@ -192,13 +194,25 @@ struct PerfectStationMap[
                 if sorted_keys[y] < sorted_keys[min_idx]:
                     min_idx = y
             if min_idx != x:
-                var tk = sorted_keys[x]; sorted_keys[x] = sorted_keys[min_idx]; sorted_keys[min_idx] = tk
-                var ti = slot_indices[x]; slot_indices[x] = slot_indices[min_idx]; slot_indices[min_idx] = ti
+                var tk = sorted_keys[x]
+                sorted_keys[x] = sorted_keys[min_idx]
+                sorted_keys[min_idx] = tk
+                var ti = slot_indices[x]
+                slot_indices[x] = slot_indices[min_idx]
+                slot_indices[min_idx] = ti
         print("{", end="")
         for i in range(len(sorted_keys)):
             var slot = slot_indices[i]
             var stats = self.data[slot].stats
             print(sorted_keys[i], end="=")
-            print(Float64(stats.min) / 10.0, "/", stats.mean(), "/", Float64(stats.max) / 10.0, end="")
-            if i < len(sorted_keys) - 1: print(", ", end="")
+            print(
+                Float64(stats.min) / 10.0,
+                "/",
+                stats.mean(),
+                "/",
+                Float64(stats.max) / 10.0,
+                end="",
+            )
+            if i < len(sorted_keys) - 1:
+                print(", ", end="")
         print("}\n")
