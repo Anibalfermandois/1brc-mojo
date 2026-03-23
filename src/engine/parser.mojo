@@ -1,4 +1,4 @@
-from std.memory import UnsafePointer
+from std.memory import UnsafePointer, bitcast
 from std.sys.info import simd_width_of
 from std.bit import count_trailing_zeros
 from std.sys.intrinsics import likely, unlikely, assume, expect
@@ -26,8 +26,8 @@ def parse_row[
 ) -> None:
     """Parse a single row [name_start, nl) and insert into the map."""
     var chunk8 = (ptr + (nl - 8)).bitcast[UInt64]().load()
-    var c_frac = Int((chunk8 >> 56) & 0xFF) - 48
-    var c_units = Int((chunk8 >> 40) & 0xFF) - 48
+    var c_frac = Int((chunk8 >> 56) & 0x0F)
+    var c_units = Int((chunk8 >> 40) & 0x0F)
     var c4 = Int((chunk8 >> 32) & 0xFF)
     var c5 = Int((chunk8 >> 24) & 0xFF)
 
@@ -68,7 +68,7 @@ def parse_chunk[
     var i = 0
     var row_start = 0
 
-    while i + 64 <= size:
+    while likely(i + 64 <= size):
         comptime if T.ACTIVE:
             for _ in range(4): metrics.record_simd_iteration()
 
@@ -83,10 +83,13 @@ def parse_chunk[
         var m3 = c3.eq(nl_vec)
 
         if likely((m0 | m1 | m2 | m3).reduce_or()):
-            comptime u16_powers = SIMD[DType.uint16, 16](1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768)
             
             if m0.reduce_or():
-                var final_mask = Int((m0.cast[DType.uint16]() * u16_powers).reduce_add())
+                var bytes = m0.cast[DType.uint8]() & 1
+                var u64 = bitcast[DType.uint64, 2](bytes)
+                var res0 = (u64[0] * 0x8040201008040201) >> 56
+                var res1 = (u64[1] * 0x8040201008040201) >> 56
+                var final_mask = Int(res0) | (Int(res1) << 8)
                 var bit_idx = Int(count_trailing_zeros(final_mask))
                 var nl = i + bit_idx
                 parse_row(map, ptr, row_start, nl, metrics)
@@ -101,7 +104,11 @@ def parse_chunk[
                         final_mask &= final_mask - 1
                 comptime if T.ACTIVE: metrics.record_row_simd()
             if m1.reduce_or():
-                var final_mask = Int((m1.cast[DType.uint16]() * u16_powers).reduce_add())
+                var bytes = m1.cast[DType.uint8]() & 1
+                var u64 = bitcast[DType.uint64, 2](bytes)
+                var res0 = (u64[0] * 0x8040201008040201) >> 56
+                var res1 = (u64[1] * 0x8040201008040201) >> 56
+                var final_mask = Int(res0) | (Int(res1) << 8)
                 var bit_idx = Int(count_trailing_zeros(final_mask))
                 var nl = i + 16 + bit_idx
                 parse_row(map, ptr, row_start, nl, metrics)
@@ -116,7 +123,11 @@ def parse_chunk[
                         final_mask &= final_mask - 1
                 comptime if T.ACTIVE: metrics.record_row_simd()
             if m2.reduce_or():
-                var final_mask = Int((m2.cast[DType.uint16]() * u16_powers).reduce_add())
+                var bytes = m2.cast[DType.uint8]() & 1
+                var u64 = bitcast[DType.uint64, 2](bytes)
+                var res0 = (u64[0] * 0x8040201008040201) >> 56
+                var res1 = (u64[1] * 0x8040201008040201) >> 56
+                var final_mask = Int(res0) | (Int(res1) << 8)
                 var bit_idx = Int(count_trailing_zeros(final_mask))
                 var nl = i + 32 + bit_idx
                 parse_row(map, ptr, row_start, nl, metrics)
@@ -131,7 +142,11 @@ def parse_chunk[
                         final_mask &= final_mask - 1
                 comptime if T.ACTIVE: metrics.record_row_simd()
             if m3.reduce_or():
-                var final_mask = Int((m3.cast[DType.uint16]() * u16_powers).reduce_add())
+                var bytes = m3.cast[DType.uint8]() & 1
+                var u64 = bitcast[DType.uint64, 2](bytes)
+                var res0 = (u64[0] * 0x8040201008040201) >> 56
+                var res1 = (u64[1] * 0x8040201008040201) >> 56
+                var final_mask = Int(res0) | (Int(res1) << 8)
                 var bit_idx = Int(count_trailing_zeros(final_mask))
                 var nl = i + 48 + bit_idx
                 parse_row(map, ptr, row_start, nl, metrics)

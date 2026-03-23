@@ -90,6 +90,23 @@ fn get_station_hash_head3_tailm3(s: String) -> UInt64:
     val |= UInt64(b[length - 3]) << 32
     return val
 
+fn get_station_hash_minimal(s: String) -> UInt64:
+    var b = s.as_bytes()
+    var length = len(b)
+    if length < 3:
+        return 0
+    var head: UInt64 = 0
+    head |= UInt64(b[0])
+    head |= UInt64(b[1]) << 8
+    head |= UInt64(b[2]) << 16
+    if length >= 4:
+        head |= UInt64(b[3]) << 24
+    else:
+        head |= UInt64(ord(";")) << 24
+
+    var tail_byte = UInt64(b[length - 3])
+    return head | (tail_byte << 32)
+
 fn get_station_hash(s: String, strategy: Int) -> UInt64:
     if strategy == 1:
         return get_station_hash_xor5(s)
@@ -99,6 +116,8 @@ fn get_station_hash(s: String, strategy: Int) -> UInt64:
         return get_station_hash_xor3(s)
     elif strategy == 4:
         return get_station_hash_head3_tailm3(s)
+    elif strategy == 5:
+        return get_station_hash_minimal(s)
     return get_station_hash_original(s)
 
 @always_inline
@@ -153,6 +172,7 @@ def main() raises:
     strategy_names.append("xor4")
     strategy_names.append("xor3")
     strategy_names.append("head3_tailm3")
+    strategy_names.append("minimal")
     print("Strategy:", strategy_names[strategy])
 
     for i in range(len(lines)):

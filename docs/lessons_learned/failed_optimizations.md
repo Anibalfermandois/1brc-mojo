@@ -65,3 +65,8 @@ This document records optimization attempts that did not yield the expected resu
 - **Idea:** Pipeline the 64-byte `parse_chunk` loop by prefetching the *next* block of `c0..c3` SIMD vectors from memory *while* processing the newlines of the *current* block, aiming to overlap memory latency with parsing computation.
 - **Result:** Neutral to slightly worse (~429ms vs 424ms baseline).
 - **Reason:** Apple Silicon's Out-of-Order execution engine and hardware prefetcher are highly optimized for sequential, unrolled memory accesses. Eagerly issuing loads artificially pressured registers and instruction scheduling, disrupting the hardware's own pipelining without yielding any memory stall savings.
+
+## Temperature SIMD-Within-A-Register (SWAR)
+- **Idea:** Replace the individual `c_frac`, `c_units`, `c4`, and `c5` byte shifts and masks in `parse_row` with a single 64-bit `mask = chunk8 & 0x0F000F0F00000000` to extract all digits simultaneously.
+- **Result:** ~12ms regression (430ms vs 418ms baseline).
+- **Reason:** On ARM64 architectures, LLVM expertly utilizes dedicated `ubfx` (unsigned bitfield extract) instructions, which can shift and mask a byte in a single cycle without needing external constants. The SWAR approach forces the CPU to materialize a large 64-bit mask constant into a register and still requires subsequent shifts, resulting in more ALU pressure than the native scalar extractions.

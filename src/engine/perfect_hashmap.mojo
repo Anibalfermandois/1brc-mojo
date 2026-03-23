@@ -6,15 +6,15 @@ from .stations_data import PERFECT_MULTIPLIER, PERFECT_CAPACITY, PERFECT_SHIFT
 
 @fieldwise_init
 struct StationStats(Copyable, ImplicitlyCopyable, Movable):
-    var min: Int
-    var max: Int
-    var sum: Int
-    var count: Int
+    var min: Int16
+    var max: Int16
+    var count: Int32
+    var sum: Int64
 
     def __init__(out self, initial_temp: Int):
-        self.min = initial_temp
-        self.max = initial_temp
-        self.sum = initial_temp
+        self.min = Int16(initial_temp)
+        self.max = Int16(initial_temp)
+        self.sum = Int64(initial_temp)
         self.count = 1
 
     def __init__(out self, *, copy: Self):
@@ -31,9 +31,9 @@ struct StationStats(Copyable, ImplicitlyCopyable, Movable):
 
     @always_inline
     def update(mut self, temp: Int):
-        self.min = min(self.min, temp)
-        self.max = max(self.max, temp)
-        self.sum += temp
+        self.min = min(self.min, Int16(temp))
+        self.max = max(self.max, Int16(temp))
+        self.sum += Int64(temp)
         self.count += 1
 
     def mean(self) -> Float64:
@@ -43,29 +43,28 @@ struct StationStats(Copyable, ImplicitlyCopyable, Movable):
 
 
 struct MapEntry(Copyable, ImplicitlyCopyable, Movable):
-    var stats: StationStats  # 32 bytes
+    var stats: StationStats  # 16 bytes
     var ptr: UnsafePointer[UInt8, MutExternalOrigin]  # 8 bytes
-    var signature: UInt32  # 4 bytes
     var length: Int32  # 4 bytes
-    # Total: 48 bytes
+    var padding: Int32  # 4 bytes
+    # Total: 32 bytes
 
     def __init__(out self):
         self.stats = StationStats(min=999, max=-999, sum=0, count=0)
         self.ptr = UnsafePointer[UInt8, MutExternalOrigin]()
-        self.signature = 0
         self.length = 0
+        self.padding = 0
 
     def __init__(
         out self,
         stats: StationStats,
         ptr: UnsafePointer[UInt8, MutExternalOrigin],
         length: Int,
-        signature: UInt32,
     ):
         self.stats = stats
         self.ptr = ptr
-        self.signature = signature
         self.length = Int32(length)
+        self.padding = 0
 
 
 struct PerfectStationMap[
@@ -157,14 +156,14 @@ struct PerfectStationMap[
         var idx = Int((val * Self.MULTIPLIER) >> UInt64(Self.SHIFT))
 
         if self.data[idx].stats.count > 0:
-            if incoming.min < self.data[idx].stats.min:
+            if Int32(incoming.min) < Int32(self.data[idx].stats.min):
                 self.data[idx].stats.min = incoming.min
-            if incoming.max > self.data[idx].stats.max:
+            if Int32(incoming.max) > Int32(self.data[idx].stats.max):
                 self.data[idx].stats.max = incoming.max
             self.data[idx].stats.sum += incoming.sum
             self.data[idx].stats.count += incoming.count
         else:
-            self.data[idx] = MapEntry(incoming, ptr, length, UInt32(0))
+            self.data[idx] = MapEntry(incoming, ptr, length)
             self.size += 1
 
     def merge_from(mut self, read other: Self):

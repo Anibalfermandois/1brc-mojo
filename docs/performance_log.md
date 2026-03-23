@@ -25,3 +25,11 @@ This file tracks the performance of different optimizations over time. New resul
 | 2026-03-22 | 4x Unroll | 300M | 525ms | - | Unrolled SIMD loop |
 | 2026-03-22 | Combined Mask | 300M | 424ms | - | Combined reduction checks in unrolled loop |
 | 2026-03-22 | 32B MapEntry | 300M | 431ms | - | Reduced MapEntry from 48B to 32B (Min result) |
+| 2026-03-22 | Branchless Update | 300M | 418ms | - | Branchless min/max + peeled newline loop (Min) |
+| 2026-03-22 | Magic Movemask | 300M | 401ms | - | Record. Magic 64-bit Movemask + rbit/clz |
+| 2026-03-22 | Refined Movemask | 300M | 396ms | - | **New Record**. 0x0F masking + likely() loops. |
+| 2026-03-22 | Magic Movemask | 100M | 123ms | - | **Record**. |
+| 2026-03-22 | Magic Movemask | 600M | 1.63s | - | **Record**. |
+| 2026-03-22 | Magic Movemask | 1B | 4.36s | - | **Record**. (Previous best: 10.4s) |
+| 2026-03-22 | Magic Movemask | 1B | 4.3604s | - | Updated Movemask with 0x0F masking + likely() loops. |
+| 2026-03-23 | 32B MapEntry | 1B | 4223ms | 236.80M | **New Record**. 32-byte MapEntry optimization. |
