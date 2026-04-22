@@ -33,3 +33,4 @@ This file tracks the performance of different optimizations over time. New resul
 | 2026-03-22 | Magic Movemask | 1B | 4.36s | - | **Record**. (Previous best: 10.4s) |
 | 2026-03-22 | Magic Movemask | 1B | 4.3604s | - | Updated Movemask with 0x0F masking + likely() loops. |
 | 2026-03-23 | 32B MapEntry | 1B | 4223ms | 236.80M | **New Record**. 32-byte MapEntry optimization. |
+| 2026-04-22 | Native Width + Align | 300M | 1009ms | 297.32M | Refactored SIMD loop to 16B native width + @align(64). |
