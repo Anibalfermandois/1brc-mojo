@@ -46,7 +46,7 @@ def run_pipeline[
     var ptr = mapped.ptr
     var size = mapped.size
 
-    comptime STREAMING_THRESHOLD = 4 * 1024 * 1024 * 1024  # 4 GB
+    comptime STREAMING_THRESHOLD = 2 * 1024 * 1024 * 1024  # 2 GB
     var use_streaming = size >= STREAMING_THRESHOLD
     
     if not use_streaming:

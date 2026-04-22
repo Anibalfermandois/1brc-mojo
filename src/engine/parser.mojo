@@ -68,135 +68,25 @@ def parse_chunk[
     var i = 0
     var row_start = 0
 
-    while likely(i + 64 <= size):
-        comptime if T.ACTIVE:
-            for _ in range(4): metrics.record_simd_iteration()
+    while likely(i + 16 <= size):
+        var chunk = ptr.load[width=16](i)
+        var mask = chunk.eq(nl_vec)
 
-        var c0 = ptr.load[width=16](i)
-        var c1 = ptr.load[width=16](i + 16)
-        var c2 = ptr.load[width=16](i + 32)
-        var c3 = ptr.load[width=16](i + 48)
+        if likely(mask.reduce_or()):
+            var bytes = mask.cast[DType.uint8]() & 1
+            var u64 = bitcast[DType.uint64, 2](bytes)
+            var res0 = (u64[0] * 0x0102040810204080) >> 56
+            var res1 = (u64[1] * 0x0102040810204080) >> 56
+            var final_mask = Int(res0) | (Int(res1) << 8)
 
-        var m0 = c0.eq(nl_vec)
-        var m1 = c1.eq(nl_vec)
-        var m2 = c2.eq(nl_vec)
-        var m3 = c3.eq(nl_vec)
-
-        if likely((m0 | m1 | m2 | m3).reduce_or()):
-            
-            if m0.reduce_or():
-                var bytes = m0.cast[DType.uint8]() & 1
-                var u64 = bitcast[DType.uint64, 2](bytes)
-                var res0 = (u64[0] * 0x0102040810204080) >> 56
-                var res1 = (u64[1] * 0x0102040810204080) >> 56
-                var final_mask = Int(res0) | (Int(res1) << 8)
+            while final_mask != 0:
                 var bit_idx = Int(count_trailing_zeros(final_mask))
                 var nl = i + bit_idx
                 parse_row(map, ptr, row_start, nl, metrics)
                 row_start = nl + 1
                 final_mask &= final_mask - 1
-                if unlikely(final_mask != 0):
-                    while final_mask != 0:
-                        bit_idx = Int(count_trailing_zeros(final_mask))
-                        nl = i + bit_idx
-                        parse_row(map, ptr, row_start, nl, metrics)
-                        row_start = nl + 1
-                        final_mask &= final_mask - 1
-                comptime if T.ACTIVE: metrics.record_row_simd()
-            if m1.reduce_or():
-                var bytes = m1.cast[DType.uint8]() & 1
-                var u64 = bitcast[DType.uint64, 2](bytes)
-                var res0 = (u64[0] * 0x0102040810204080) >> 56
-                var res1 = (u64[1] * 0x0102040810204080) >> 56
-                var final_mask = Int(res0) | (Int(res1) << 8)
-                var bit_idx = Int(count_trailing_zeros(final_mask))
-                var nl = i + 16 + bit_idx
-                parse_row(map, ptr, row_start, nl, metrics)
-                row_start = nl + 1
-                final_mask &= final_mask - 1
-                if unlikely(final_mask != 0):
-                    while final_mask != 0:
-                        bit_idx = Int(count_trailing_zeros(final_mask))
-                        nl = i + 16 + bit_idx
-                        parse_row(map, ptr, row_start, nl, metrics)
-                        row_start = nl + 1
-                        final_mask &= final_mask - 1
-                comptime if T.ACTIVE: metrics.record_row_simd()
-            if m2.reduce_or():
-                var bytes = m2.cast[DType.uint8]() & 1
-                var u64 = bitcast[DType.uint64, 2](bytes)
-                var res0 = (u64[0] * 0x0102040810204080) >> 56
-                var res1 = (u64[1] * 0x0102040810204080) >> 56
-                var final_mask = Int(res0) | (Int(res1) << 8)
-                var bit_idx = Int(count_trailing_zeros(final_mask))
-                var nl = i + 32 + bit_idx
-                parse_row(map, ptr, row_start, nl, metrics)
-                row_start = nl + 1
-                final_mask &= final_mask - 1
-                if unlikely(final_mask != 0):
-                    while final_mask != 0:
-                        bit_idx = Int(count_trailing_zeros(final_mask))
-                        nl = i + 32 + bit_idx
-                        parse_row(map, ptr, row_start, nl, metrics)
-                        row_start = nl + 1
-                        final_mask &= final_mask - 1
-                comptime if T.ACTIVE: metrics.record_row_simd()
-            if m3.reduce_or():
-                var bytes = m3.cast[DType.uint8]() & 1
-                var u64 = bitcast[DType.uint64, 2](bytes)
-                var res0 = (u64[0] * 0x0102040810204080) >> 56
-                var res1 = (u64[1] * 0x0102040810204080) >> 56
-                var final_mask = Int(res0) | (Int(res1) << 8)
-                var bit_idx = Int(count_trailing_zeros(final_mask))
-                var nl = i + 48 + bit_idx
-                parse_row(map, ptr, row_start, nl, metrics)
-                row_start = nl + 1
-                final_mask &= final_mask - 1
-                if unlikely(final_mask != 0):
-                    while final_mask != 0:
-                        bit_idx = Int(count_trailing_zeros(final_mask))
-                        nl = i + 48 + bit_idx
-                        parse_row(map, ptr, row_start, nl, metrics)
-                        row_start = nl + 1
-                        final_mask &= final_mask - 1
-                comptime if T.ACTIVE: metrics.record_row_simd()
-        i += 64
+        i += 16
 
-    while i + width <= size:
-        comptime if T.ACTIVE:
-            metrics.record_simd_iteration()
-
-        var chunk = ptr.load[width=width](i)
-        var mask: SIMD[DType.bool, width] = chunk.eq(nl_vec)
-
-        if likely(mask.reduce_or()):
-            comptime if T.ACTIVE:
-                metrics.record_simd_hit()
-            comptime if width == 16:
-                var as_u8 = mask.cast[DType.uint8]() & 1
-                var as_u64 = bitcast[DType.uint64, 2](as_u8)
-                var res0 = (as_u64[0] * 0x0102040810204080) >> 56
-                var res1 = (as_u64[1] * 0x0102040810204080) >> 56
-                var final_mask = Int(res0) | (Int(res1) << 8)
-
-                while final_mask != 0:
-                    var bit_idx = Int(count_trailing_zeros(final_mask))
-                    var nl = i + bit_idx
-                    
-                    parse_row(map, ptr, row_start, nl, metrics)
-                    row_start = nl + 1
-                    final_mask &= final_mask - 1
-                    comptime if T.ACTIVE:
-                        metrics.record_row_simd()
-            else:
-                comptime for k in range(width):
-                    if mask[k]:
-                        var nl = i + k
-                        parse_row(map, ptr, row_start, nl, metrics)
-                        row_start = nl + 1
-                        comptime if T.ACTIVE:
-                            metrics.record_row_simd()
-        i += width
 
     while i < size:
         if ptr[i] == 10:

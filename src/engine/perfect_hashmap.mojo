@@ -5,7 +5,7 @@ from .stations_data import PERFECT_MULTIPLIER, PERFECT_CAPACITY, PERFECT_SHIFT
 
 
 @fieldwise_init
-struct StationStats(Copyable, ImplicitlyCopyable, Movable):
+struct StationStats(TrivialRegisterPassable, ImplicitlyCopyable):
     var min: Int16
     var max: Int16
     var count: Int32
@@ -17,17 +17,7 @@ struct StationStats(Copyable, ImplicitlyCopyable, Movable):
         self.sum = Int64(initial_temp)
         self.count = 1
 
-    def __init__(out self, *, copy: Self):
-        self.min = copy.min
-        self.max = copy.max
-        self.sum = copy.sum
-        self.count = copy.count
 
-    def __init__(out self, *, deinit take: Self):
-        self.min = take.min
-        self.max = take.max
-        self.sum = take.sum
-        self.count = take.count
 
     @always_inline
     def update(mut self, temp: Int):
@@ -42,7 +32,8 @@ struct StationStats(Copyable, ImplicitlyCopyable, Movable):
         return Float64(self.sum) / (Float64(self.count) * 10.0)
 
 
-struct MapEntry(Copyable, ImplicitlyCopyable, Movable):
+@align(64)
+struct MapEntry(TrivialRegisterPassable, ImplicitlyCopyable):
     var stats: StationStats  # 16 bytes
     var ptr: UnsafePointer[UInt8, MutExternalOrigin]  # 8 bytes
     var length: Int32  # 4 bytes
@@ -96,6 +87,9 @@ struct PerfectStationMap[
         self.size = take.size
         self.metrics = take.metrics^
 
+    def __del__(deinit self):
+        self.data.free()
+
     @always_inline
     def update_or_insert(
         mut self,
@@ -130,16 +124,17 @@ struct PerfectStationMap[
 
         # Perfect hash: unconditional stats update.
         # ptr/length set only on first encounter (413 times out of 1B rows).
-        if unlikely(self.data[idx].stats.count == 0):
-            self.data[idx].ptr = ptr
-            self.data[idx].length = Int32(length)
+        ref entry = self.data[idx]
+        if unlikely(entry.stats.count == 0):
+            entry.ptr = ptr
+            entry.length = Int32(length)
             self.size += 1
             comptime if Self.MAP_TRACKER.ACTIVE:
                 self.metrics.record_insert()
         comptime if Self.MAP_TRACKER.ACTIVE:
-            if self.data[idx].stats.count > 0:
+            if entry.stats.count > 0:
                 self.metrics.record_update()
-        self.data[idx].stats.update(temp)
+        entry.stats.update(temp)
 
     def update_from_stats(
         mut self,
@@ -155,15 +150,18 @@ struct PerfectStationMap[
 
         var idx = Int((val * Self.MULTIPLIER) >> UInt64(Self.SHIFT))
 
-        if self.data[idx].stats.count > 0:
-            if Int32(incoming.min) < Int32(self.data[idx].stats.min):
-                self.data[idx].stats.min = incoming.min
-            if Int32(incoming.max) > Int32(self.data[idx].stats.max):
-                self.data[idx].stats.max = incoming.max
-            self.data[idx].stats.sum += incoming.sum
-            self.data[idx].stats.count += incoming.count
+        ref entry = self.data[idx]
+        if entry.stats.count > 0:
+            var stats = entry.stats
+            if Int32(incoming.min) < Int32(stats.min):
+                stats.min = incoming.min
+            if Int32(incoming.max) > Int32(stats.max):
+                stats.max = incoming.max
+            stats.sum += incoming.sum
+            stats.count += incoming.count
+            entry.stats = stats
         else:
-            self.data[idx] = MapEntry(incoming, ptr, length)
+            entry = MapEntry(incoming, ptr, length)
             self.size += 1
 
     def merge_from(mut self, read other: Self):
