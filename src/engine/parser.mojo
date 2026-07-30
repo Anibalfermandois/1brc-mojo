@@ -23,9 +23,24 @@ def parse_row[
     name_start: Int,
     nl: Int,
     mut metrics: T,
+    bounded_load: Bool = False,
 ) -> None:
     """Parse a single row [name_start, nl) and insert into the map."""
-    var chunk8 = (ptr + (nl - 8)).bitcast[UInt64]().load()
+    var chunk8 = UInt64(0)
+    if bounded_load:
+        # The first legal row can place its newline at byte 7, so an 8-byte
+        # backward load would begin before the chunk. Reconstruct only the
+        # four bytes the temperature parser consumes.
+        chunk8 |= UInt64(ptr[nl - 5]) << 24
+        chunk8 |= UInt64(ptr[nl - 4]) << 32
+        chunk8 |= UInt64(ptr[nl - 3]) << 40
+        chunk8 |= UInt64(ptr[nl - 1]) << 56
+    else:
+        chunk8 = (
+            (ptr + (nl - 8))
+            .bitcast[UInt64]()
+            .load[alignment=1]()
+        )
     var c_frac = Int((chunk8 >> 56) & 0x0F)
     var c_units = Int((chunk8 >> 40) & 0x0F)
     var c4 = Int((chunk8 >> 32) & 0xFF)
@@ -65,9 +80,22 @@ def parse_chunk[
     comptime width = 16
     comptime nl_vec = SIMD[DType.uint8, width](ASCII_LF)
 
-    var i = 0
-    var row_start = 0
+    # Peel one row per chunk so the backward temperature load is always
+    # contained within the chunk. Seven is the earliest legal newline:
+    # three-byte station, semicolon, and three-byte temperature.
+    if size <= 7:
+        return
+    var first_nl = 7
+    while first_nl < size and ptr[first_nl] != ASCII_LF:
+        first_nl += 1
+    if first_nl == size:
+        return
+    parse_row(map, ptr, 0, first_nl, metrics, bounded_load=True)
+    comptime if T.ACTIVE:
+        metrics.record_row_tail()
 
+    var i = first_nl + 1
+    var row_start = i
     while likely(i + 16 <= size):
         comptime if T.ACTIVE:
             metrics.record_simd_iteration()

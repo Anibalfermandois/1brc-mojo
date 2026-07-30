@@ -19,6 +19,11 @@ def build_fixture(stations_path: Path, output_path: Path) -> dict[str, tuple[int
     expected: dict[str, tuple[int, int, int, int]] = {}
 
     with output_path.open("w", encoding="utf-8", newline="\n") as handle:
+        # Exercise the earliest legal newline at byte 7. The optimized parser
+        # must not read before the beginning of its first chunk.
+        handle.write("Wau;0.0\n")
+        expected["Wau"] = (0, 0, 0, 1)
+
         # Large enough that each worker crosses the stream's 4 MiB buffer
         # boundary on the usual 8-core target.
         for repetition in range(6_000):

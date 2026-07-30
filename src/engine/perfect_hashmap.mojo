@@ -104,7 +104,7 @@ struct PerfectStationMap[
         temp: Int,
     ):
         assume(length >= 3)
-        var head = UInt64(ptr.bitcast[UInt32]().load())
+        var head = UInt64(ptr.bitcast[UInt32]().load[alignment=1]())
         var tail_byte = UInt64(ptr[length - 3])
         self.update_or_insert_precomputed(ptr, length, temp, head, tail_byte)
 
@@ -149,7 +149,7 @@ struct PerfectStationMap[
         read incoming: StationStats,
     ):
         assume(length >= 3)
-        var head = UInt64(ptr.bitcast[UInt32]().load())
+        var head = UInt64(ptr.bitcast[UInt32]().load[alignment=1]())
         var val = UInt64(length)
         val |= (head & 0xFFFFFF) << 8
         val |= UInt64(ptr[length - 3]) << 32
