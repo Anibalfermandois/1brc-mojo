@@ -61,26 +61,29 @@ and temperature parsing lowers to compact bitfield and conditional-select
 instructions. The installed nightly exposes optimized assembly and unoptimized
 LLVM IR, but no supported MLIR dump.
 
-The inspection did find a safety issue to repair before performance work. The
-record-dependent `UInt64` temperature load and `UInt32` name-head load are
-generally unaligned, but the emitted LLVM IR claims alignments of eight and four
-bytes. Both loads should declare `alignment=1`. The earliest legal newline can
-also make the first temperature load begin one byte before its chunk, so the
-first row of each chunk needs an explicit bounded treatment.
+The safety issue found by inspection is repaired in `c44c4d3`. Record-dependent
+integer loads declare `alignment=1`, and each chunk peels one bounded first row
+starting at the earliest legal newline position. The steady-state assembly
+retains the same unaligned load and has no new per-row safety branch. The mmap
+and forced-streaming oracle includes `Wau;0.0` as the shortest legal first row.
 
-After that repair, test these CPU candidates independently:
+Two map candidates were tested and restored:
 
-1. Remove release-only first-insert bookkeeping while retaining the 32-byte
-   layout. Canonical station data made `ptr` and `length` write-only, yet every
-   row still branches on `count`; keep that branch only in analysis mode.
-2. Remove the dead name metadata in a separate step, producing a 16-byte
-   stats-only entry without changing the perfect-hash capacity or multiplier.
-3. Replace the full 16,384-slot-per-worker merge scan with a runtime loop over
+- Compiling first-insert bookkeeping only for analysis mode removed the release
+  branch at the existing 32-byte stride. Both comparisons favored it by
+  1.34–1.62% wall and 1.88–2.66% parse, below the 5% promotion threshold.
+- A 16-byte stats-only entry preserved the hash configuration but was
+  0.19–0.25% slower wall and about 1.18% slower parse in the two adjacent
+  comparisons. Keep the 32-byte entry.
+
+The remaining CPU candidates, in order, are:
+
+1. Replace the full 16,384-slot-per-worker merge scan with a runtime loop over
    the 413 generated occupied slots.
-4. For streaming, avoid retaining an unused mmap and test a single reusable
+2. For streaming, avoid retaining an unused mmap and test a single reusable
    buffer. The current two buffers are synchronous rather than overlapping I/O
    with parsing.
-5. Only then try earlier hash scheduling or a packed statistics header. Reject
+3. Only then try earlier hash scheduling or a packed statistics header. Reject
    the packed form before timing unless its assembly materially reduces memory
    operations without spills or a longer instruction path.
 
@@ -280,12 +283,14 @@ Stop the investigation if any of these remain true after the workgroup redesign:
 ## Decision
 
 The CPU implementation remains the performance and correctness reference.
-Use the native 16-byte newline loop, compact statistics, one equal-byte task per
-logical core, and demand-paged mmap below 2 GiB. Keep `@align(64)` only as a
-neutral allocation-base setting. Controlled experiments rejected the 64-byte
-unroll, removal of that base alignment, native-width statistics, peeled newline
-handling, mask-guard removal, and work stealing. The regenerated streaming
-curve and lazy-mmap series are the performance baselines for future comparisons.
+Use the bounded-first-row/native-16-byte newline loop, the 32-byte compact map
+entry, one equal-byte task per logical core, and demand-paged mmap below 2 GiB.
+Keep `@align(64)` only as a neutral allocation-base setting. Controlled
+experiments rejected the 64-byte unroll, removal of that base alignment,
+native-width statistics, release-only insert-branch removal, 16-byte map
+entries, peeled newline handling, mask-guard removal, and work stealing. The
+regenerated streaming curve and lazy-mmap series are the performance baselines
+for future comparisons.
 
 A GPU revisit is technically justified because the previous prototype did not
 exercise the GPU effectively. The likely benefit is bounded: a large pure-GPU

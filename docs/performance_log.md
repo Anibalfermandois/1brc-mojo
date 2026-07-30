@@ -70,6 +70,25 @@ do not justify work stealing. Raw evidence is under
 Cold-cache mmap advice was not tested because flushing shared system caches
 would disrupt concurrent machine use.
 
+### Assembly-led parser and map follow-up
+
+Checkpoint `c44c4d3` declares the record-dependent integer loads as unaligned
+and peels one bounded first row per chunk. The optimized steady-state loop has
+no added safety branch, and the 413-station oracle passes in mmap and forced
+streaming modes with the earliest legal newline at byte 7.
+
+Two 11-sample-per-leg experiments retained the ordinary 32-byte implementation:
+
+| Candidate comparison | Wall delta | Parse delta | Decision |
+|---|---:|---:|---|
+| Release insert branch B1 vs A1 | −1.62% | −2.66% | Below threshold |
+| Release insert branch B2 vs A2 | −1.34% | −1.88% | Below threshold |
+| 16-byte entry B1 vs A2 | +0.25% | +1.17% | Reject |
+| 16-byte entry B2 vs A3 | +0.19% | +1.18% | Reject |
+
+Raw samples and environment metadata are under
+`results/benchmarks/20260730-{asm-safety-baseline,release-insert-branch,stats16}-*`.
+
 The final retained lazy-mmap source measured 165.741 ms wall and 140.098 ms
 parse medians in an additional 11-sample series. Its 4.98% wall relative MAD
 records heavier concurrent-use noise without changing the decision.

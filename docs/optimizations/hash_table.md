@@ -25,6 +25,11 @@ Thread maps merge by perfect-hash slot. Output names come from the generated
 413-station table, so reusable streaming-buffer pointers are never dereferenced
 after parsing.
 
+Keep the 32-byte entry and release first-insert bookkeeping. Removing that
+bookkeeping produced a repeatable but sub-threshold 1.34–1.62% wall improvement.
+A separate 16-byte stats-only entry was 0.19–0.25% slower wall and about 1.18%
+slower internally in adjacent comparisons.
+
 ## Integer Accumulator
 
 Temperatures are parsed as integers (e.g., `12.3` becomes `123`), keeping the

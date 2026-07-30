@@ -1,0 +1,16 @@
+condition=normal concurrent machine use
+started_utc=2026-07-30T20:37:54Z
+dataset=measurements_100m.txt
+dataset_bytes=1379614933
+available_ram=~5491 MB
+samples=11
+nice_level=10
+pause_seconds=0.25
+git_commit=c44c4d36611b6ca5da41ce1f20df37752bb06c78
+git_status_entries=12
+source_fingerprint=f8b500f48dc5f6c989e92db1949db5c27259815b
+pixi_version=pixi 0.74.0
+mojo_version=Mojo 1.0.0b3.dev2026073014 (86c799a2)
+os=macOS 26.5.2 (25F84)
+uptime_before=16:37  5 users, load averages: 2.82 2.83 2.65
+uptime_after=16:37  5 users, load averages: 2.68 2.80 2.64
