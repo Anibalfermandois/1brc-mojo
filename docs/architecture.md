@@ -1,16 +1,19 @@
 # 1BRC Mojo — Architecture & Optimizations
 
-This document outlines the technical architecture and the specific optimizations that enable the Mojo implementation to process 1 billion rows at extreme speeds.
+This document outlines the technical architecture and the optimizations used to
+process the 1BRC datasets.
 
 ## Executive Summary
 
-The project achieves high throughput by combining Mojo's low-level systems capabilities (SIMD, pointers, metaprogramming) with a specialized architecture designed for the 1BRC dataset. Run with `pixi run`
+The project combines Mojo SIMD, pointers, metaprogramming, perfect hashing, and
+thread-local aggregation in a specialized 1BRC parser.
 
-### Core Metrics (MacBook Air M2)
-- **Peak Engine Throughput:** ~714 M rows/s (100M dataset)
-- **RAM-Speed Throughput:** ~666 M rows/s (300M dataset)
-- **Streaming Throughput (600M+):** ~326 M rows/s (~4.5 GB/s) — Optimized via Direct I/O (F_NOCACHE)
-- **Legacy Disk-Bound Throughput:** ~60 M rows/s (Baseline mmap)
+### Validated Metrics (2026-07-30, Normal Concurrent Use)
+
+- **100M lazy mmap:** 161.611 ms, 162.727 ms, and 165.741 ms wall medians.
+- **300M streaming:** 1.248 s wall median; 245.57 M rows/s parse throughput.
+- **600M streaming:** 2.480 s wall median; 244.58 M rows/s parse throughput.
+- **1B streaming:** 4.126 s wall median; 244.01 M rows/s parse throughput.
 
 For detailed results, see [Benchmarks](benchmarks.md) and [Performance Log](performance_log.md).
 
@@ -20,7 +23,7 @@ For detailed results, see [Benchmarks](benchmarks.md) and [Performance Log](perf
 
 ### 1. Primary Architecture
 - **[Hash Table Design](optimizations/hash_table.md)**: Perfect hashing (O(1)), AoS for cache locality, and zero-allocation updates.
-- **[I/O & Parallelism](optimizations/io_and_parallelism.md)**: Hybrid I/O model (mmap with `madvise` for < 4GB; `pread` with `DoubleBufferedStream` for ≥ 4GB).
+- **[I/O & Parallelism](optimizations/io_and_parallelism.md)**: Hybrid I/O model (demand-paged mmap below 2 GiB; bounded `pread` streaming at 2 GiB and above).
 
 ### 2. Hot Path Optimizations
 - **[Hot Path Optimizations](optimizations/hot_path.md)**: hardware-accelerated SIMD scanning and branchless temperature parsing.
@@ -28,11 +31,11 @@ For detailed results, see [Benchmarks](benchmarks.md) and [Performance Log](perf
 ### 3. Language Features & Lifecycle
 - **Metaprogramming**: Specialized machine code generation using `comptime`.
 - **Memory Management**: Direct `UnsafePointer` indexing in the hot path, safe `ref` bindings in the merge path.
-- **Modern Mojo Syntax**: Utilizing latest nightly features (`def`, `ref`, `comptime`).
+- **Mojo Toolchain**: Pinned by `pixi.lock`; benchmark metadata records the exact compiler build.
 
 ### 4. Hardware Portability & Scaling
 - Dynamic core allocation and universal SIMD width (128-bit) for ARM NEON support.
-- Automatic paging strategy based on hardware RAM limits.
+- File-size-based selection between mmap and bounded streaming.
 
 ---
 

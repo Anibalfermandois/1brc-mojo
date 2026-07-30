@@ -1,8 +1,97 @@
 # 1BRC Mojo — Performance Log
 
-This file tracks the performance of different optimizations over time. New results should be **appended** to the end of this document.
+## Mojo 1.0 Nightly Upgrade — 2026-07-30
 
-## Performance History
+Mojo `1.0.0b3.dev2026073014` passes the 413-station oracle in mmap and forced
+streaming modes. On the bounded 100M mmap benchmark, two repeatable 11-sample
+series measured 216.809/127.343 ms and 214.044/126.465 ms for wall/parse
+medians, versus 215.320/129.051 ms before the upgrade. Treat the upgrade as
+performance-neutral end-to-end at this scale.
+
+An earlier 190.989/113.160 ms series did not reproduce under either standalone
+Mojo or the matching MAX runtime, or with the obsolete `register_passable`
+annotation restored. It is retained as cross-session drift despite its low
+within-series MAD. Raw samples and environment metadata are under the
+`results/benchmarks/20260730-mojo-1.0b3*` directories.
+
+The upgraded streaming path sustains nearly constant throughput:
+
+| Dataset | Samples | Wall median | Wall MAD | Parse median | Rows/s |
+|---|---:|---:|---:|---:|---:|
+| 300M | 11 | 1248.258 ms | 13.385 ms | 1221.664 ms | 245.57M |
+| 600M | 11 | 2479.582 ms | 9.685 ms | 2453.234 ms | 244.58M |
+| 1B | 11 | 4126.034 ms | 61.974 ms | 4098.138 ms | 244.01M |
+
+This corresponds to 3.37–3.39 GB/s. The prior 300M point was 25.72% faster,
+but the upgraded 600M and 1B wall medians are 21.74% and 21.77% faster. Treat
+the new linear curve as the current sustained streaming baseline.
+
+### `@align(64)` isolation
+
+An 11-sample-per-leg `A-B-B-A` comparison removed only `@align(64)` from
+`MapEntry`. The closing B2/A2 comparison favored the unaligned variant by
+0.44% wall and 2.82% parse, below the 5% threshold. A1 was a fast-session
+outlier and made the paired directions contradictory. The change was rejected
+and alignment remains in the source. Raw evidence is under
+`results/benchmarks/20260730-map-align-*`.
+
+### Four-vector newline scan
+
+A current-mask four-load/64-byte unroll passed the full correctness gate but
+did not produce a repeatable 5% improvement. Three adjacent B/A comparisons
+measured +8.39%, −1.74%, and −1.60% wall, and +7.70%, −5.94%, and −1.29%
+parse. The opening A block was a fast-session outlier and the third B block was
+heavily disturbed by concurrent machine use. The two later wall comparisons
+favored the unroll by less than 2%, so it was rejected and the 16-byte loop was
+restored. All 66 samples are under
+`results/benchmarks/20260730-unroll-*`.
+
+### Historical-candidate audit
+
+Four additional old-document candidates were isolated with 11 samples per
+block:
+
+- Native-width `StationStats` regressed the reliable closing comparison by
+  0.79% wall and 5.01% parse. Compact fields remain.
+- Peeling the first newline from each nonzero mask changed the closing pair by
+  +0.10% wall and +0.36% parse. The ordinary loop remains.
+- Removing the `reduce_or()` guard improved parse by 1.55% but regressed wall by
+  1.26% in the closing pair. The guard remains.
+- Removing `MADV_WILLNEED` improved wall by 9.85% and 23.89% in the opening and
+  closing comparisons. Parse time increased because demand faults moved inside
+  the parse phase, but total process time fell. Lazy mmap is retained for files
+  below 2 GiB.
+
+Current analysis found 96.77% SIMD hit blocks, 80.15% single-newline hit
+blocks, only eight scalar-tail rows, and 3.52% closing task skew. These results
+do not justify work stealing. Raw evidence is under
+`results/benchmarks/20260730-{native-stats,peeled-newline,mask-guard,mmap-advice}-*`.
+Cold-cache mmap advice was not tested because flushing shared system caches
+would disrupt concurrent machine use.
+
+The final retained lazy-mmap source measured 165.741 ms wall and 140.098 ms
+parse medians in an additional 11-sample series. Its 4.98% wall relative MAD
+records heavier concurrent-use noise without changing the decision.
+
+## Validated Baseline — 2026-07-30
+
+These results use the current correctness gate and noise-tolerant harness under
+normal concurrent machine use. Raw samples and environment metadata are stored
+under `results/benchmarks/20260730-normal-use/`.
+
+| Dataset | I/O mode | Samples | Wall median | Wall MAD | Parse median |
+|---|---|---:|---:|---:|---:|
+| 100M | mmap | 11 | 215.320 ms | 1.059 ms | 129.051 ms |
+| 300M | streaming | 11 | 992.920 ms | 43.698 ms | 956.587 ms |
+| 600M | streaming | 11 | 3168.349 ms | 108.689 ms | 2940.930 ms |
+| 1B | streaming | 7 | 5274.523 ms | 134.611 ms | 5058.483 ms |
+
+## Historical Records — Not Comparable
+
+The entries below predate the current correctness gate and raw-sample capture.
+They mix different I/O thresholds, machine pressure, summary conventions, and
+occasionally minimum versus median results. Keep them as experiment history,
+but do not use them as a current baseline or to attribute a regression.
 
 | Date | Commit/Version | Dataset | System Wall-Clock (median) | Engine Throughput (rows/s) | Notes |
 |---|---|---|---|---|---|

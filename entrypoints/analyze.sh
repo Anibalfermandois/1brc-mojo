@@ -19,7 +19,7 @@ if [ ! -f "$FILE" ]; then
     exit 1
 fi
 
-if [ ! -f "$BIN" ] || [ "src/perf.mojo" -nt "$BIN" ]; then
+if [ ! -f "$BIN" ] || find src -name "*.mojo" -newer "$BIN" | grep -q .; then
     echo "🔨 Binary out of date — rebuilding..."
     entrypoints/build.sh > /dev/null
 fi
@@ -28,6 +28,13 @@ echo "🔍 Running Deep Analysis on $FILE..."
 echo "Note: This mode tracks collisions, distribution, and parse metrics with minimal overhead."
 echo ""
 
-# We use --once so we get the internal 'Parse Time' even in analyze mode
-# (I will update perf.mojo to ensure Parse Time is printed if TRACK_METRICS is true or once is true)
-"$BIN" "$FILE" --analyze --once --no-print 2>&1 | grep -v "Failed to initialize Crashpad" || true
+ANALYZE_LOG=$(mktemp "${TMPDIR:-/tmp}/1brc-analyze.XXXXXX")
+trap 'rm -f "$ANALYZE_LOG"' EXIT
+
+if ! "$BIN" "$FILE" --analyze --once --no-print >"$ANALYZE_LOG" 2>&1; then
+    awk '!/Failed to initialize Crashpad/' "$ANALYZE_LOG" >&2
+    echo "ERROR: analysis run failed." >&2
+    exit 1
+fi
+
+awk '!/Failed to initialize Crashpad/' "$ANALYZE_LOG"

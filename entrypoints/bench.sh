@@ -13,8 +13,17 @@ shift
 
 # ── Configuration ─────────────────────────────────────────────
 FILE="${1:-measurements_300m.txt}"
-RUNS="${2:-10}"
+RUNS="${2:-11}"
 BIN="./bin/perf_bin"
+NICE_LEVEL="${BENCH_NICE:-10}"
+PAUSE_SECONDS="${BENCH_PAUSE_SECONDS:-0.25}"
+RUN_ID="${3:-${BENCH_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}}"
+RESULT_DIR="${BENCH_RESULT_DIR:-results/benchmarks/$RUN_ID}"
+
+if ! [[ "$RUNS" =~ ^[0-9]+$ ]] || [ "$RUNS" -lt 5 ]; then
+    echo "ERROR: RUNS must be an integer of at least 5."
+    exit 1
+fi
 
 # ── Validation & Build ────────────────────────────────────────
 if [ ! -f "$FILE" ]; then
@@ -27,65 +36,97 @@ if [ ! -f "$BIN" ] || find src -name "*.mojo" -newer "$BIN" | grep -q .; then
     entrypoints/build.sh > /dev/null
 fi
 
+mkdir -p "$RESULT_DIR"
+DATASET_NAME=$(basename "$FILE" .txt)
+RAW_RESULTS="$RESULT_DIR/$DATASET_NAME.csv"
+SUMMARY_RESULTS="$RESULT_DIR/$DATASET_NAME.md"
+METADATA="$RESULT_DIR/$DATASET_NAME.meta.txt"
+
 # ── System Info ───────────────────────────────────────────────
 FILE_SIZE_MB=$(( $(stat -f%z "$FILE") / 1048576 ))
 AVAILABLE_RAM=$(vm_stat | awk '/Pages free/ {gsub(/\./,"",$3); free=$3} /Pages inactive/ {gsub(/\./,"",$3); inactive=$3} END { printf "~%d MB\n", (free+inactive)*16384/1048576 }')
+SOURCE_FINGERPRINT=$(find src -type f -name "*.mojo" | sort | xargs shasum | shasum | awk '{print $1}')
 
 echo "── Environment ──────────────────────────────────────"
 echo "  File:           $FILE ($FILE_SIZE_MB MB)"
 echo "  Available RAM:  $AVAILABLE_RAM"
+echo "  Priority:       nice $NICE_LEVEL (machine remains in normal use)"
+echo "  Raw results:    $RAW_RESULTS"
 echo ""
+
+{
+    echo "condition=normal concurrent machine use"
+    echo "started_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "dataset=$FILE"
+    echo "dataset_bytes=$(stat -f%z "$FILE")"
+    echo "available_ram=$AVAILABLE_RAM"
+    echo "samples=$RUNS"
+    echo "nice_level=$NICE_LEVEL"
+    echo "pause_seconds=$PAUSE_SECONDS"
+    echo "git_commit=$(git rev-parse HEAD)"
+    echo "git_status_entries=$(git status --porcelain | wc -l | tr -d ' ')"
+    echo "source_fingerprint=$SOURCE_FINGERPRINT"
+    echo "pixi_version=$(pixi --version)"
+    echo "mojo_version=$(.pixi/envs/default/bin/mojo --version)"
+    echo "os=$(sw_vers -productName) $(sw_vers -productVersion) ($(sw_vers -buildVersion))"
+    echo "uptime_before=$(uptime)"
+} > "$METADATA"
 
 # ── Helper: get_ms ────────────────────────────────────────────
 get_ms() {
-    perl -MTime::HiRes -e 'print int(Time::HiRes::gettimeofday * 1000)' 2>/dev/null || date +%s000
+    perl -MTime::HiRes=time -e 'printf "%.3f", time() * 1000'
 }
+
+RUNNER=(nice -n "$NICE_LEVEL" "$BIN")
 
 # ── Warmup ────────────────────────────────────────────────────
 echo "Warming page cache (1 throwaway run)..."
-"$BIN" "$FILE" --once --no-print > /dev/null 2>&1 || true
+if ! WARMUP_OUTPUT=$("${RUNNER[@]}" "$FILE" --once --no-print 2>&1); then
+    echo "$WARMUP_OUTPUT" >&2
+    echo "ERROR: warmup failed." >&2
+    exit 1
+fi
+if ! grep -q "Parse Time:" <<<"$WARMUP_OUTPUT"; then
+    echo "$WARMUP_OUTPUT" >&2
+    echo "ERROR: warmup produced no parse timing." >&2
+    exit 1
+fi
 echo "Warmup done. Starting $RUNS timed runs..."
 echo ""
 
 # ── Benchmarking Loop ────────────────────────────────────────
-WALL_TIMES=()
-MOJO_TIMES=()
+echo "run,wall_ms,parse_ms" > "$RAW_RESULTS"
 
 for i in $(seq 1 "$RUNS"); do
     T_START=$(get_ms)
     
-    # Capture output to extract internal Mojo Parse Time
-    # We use --no-print to avoid printing the 413 stations
-    OUT=$("$BIN" "$FILE" --once --no-print 2>&1 || true)
+    if ! OUT=$("${RUNNER[@]}" "$FILE" --once --no-print 2>&1); then
+        echo "$OUT" >&2
+        echo "ERROR: benchmark run $i failed." >&2
+        exit 1
+    fi
     
     T_END=$(get_ms)
     
-    SHELL_MS=$(( T_END - T_START ))
-    MOJO_VAL=$(echo "$OUT" | awk '/Parse Time:/ {print $3}')
+    SHELL_MS=$(awk -v start="$T_START" -v end="$T_END" 'BEGIN { printf "%.3f", end - start }')
+    MOJO_VAL=$(awk '/Parse Time:/ {print $3}' <<<"$OUT")
+
+    if ! [[ "$MOJO_VAL" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+        echo "$OUT" >&2
+        echo "ERROR: run $i produced an invalid parse timing: '$MOJO_VAL'." >&2
+        exit 1
+    fi
     
-    printf "  Run %d: %4dms wall clock  (Mojo Parse: %7s ms)\n" "$i" "$SHELL_MS" "$MOJO_VAL"
-    
-    WALL_TIMES+=("$SHELL_MS")
-    # Convert to integer for stats (removing decimal part)
-    MOJO_INT=$(echo "$MOJO_VAL" | cut -d. -f1)
-    MOJO_TIMES+=("${MOJO_INT:-0}")
+    printf "  Run %2d: %9.3fms wall clock  (Mojo Parse: %9.3f ms)\n" "$i" "$SHELL_MS" "$MOJO_VAL"
+    printf "%d,%s,%s\n" "$i" "$SHELL_MS" "$MOJO_VAL" >> "$RAW_RESULTS"
+
+    if [ "$i" -lt "$RUNS" ]; then
+        sleep "$PAUSE_SECONDS"
+    fi
 done
 
-# ── Statistics (based on Mojo Parse Time) ──────────────────────
-IFS=$'\n' SORTED=($(sort -n <<<"${MOJO_TIMES[*]}")); unset IFS
-MIN=${SORTED[0]}
-MAX=${SORTED[${#SORTED[@]}-1]}
-MEDIAN=${SORTED[$((RUNS / 2))]}
-SUM=0; for t in "${MOJO_TIMES[@]}"; do SUM=$((SUM + t)); done
-AVG=$((SUM / RUNS))
-
 echo ""
-echo "── Results (Mojo Internal Parse Time) ───────────────"
-printf "  min:    %dms\n"    "$MIN"
-printf "  median: %dms\n"   "$MEDIAN"
-printf "  avg:    %dms\n"   "$AVG"
-printf "  max:    %dms\n"    "$MAX"
-printf "  noise:  %dms  (+/- %d%% from median)\n" "$(( MAX - MIN ))" "$(( (MAX - MIN) * 100 / (MEDIAN > 0 ? MEDIAN : 1) ))"
-echo "──────────────────────────────────────────────────────"
-echo "Note: Mojo Internal Time excludes process startup, mmap setup, and merge phases."
-echo "      Wall clock includes shell overhead and binary initialization."
+python3 scripts/summarize_benchmark.py "$RAW_RESULTS" | tee "$SUMMARY_RESULTS"
+echo "uptime_after=$(uptime)" >> "$METADATA"
+echo ""
+echo "Saved metadata: $METADATA"

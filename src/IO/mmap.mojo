@@ -17,7 +17,7 @@ loaded from disk — no upfront copy, minimal RSS peak.
 """
 
 from std.memory import UnsafePointer
-from std.ffi import external_call
+from std.ffi import CStringSlice, external_call
 from std.os.fstat import stat
 
 
@@ -38,7 +38,7 @@ comptime MADV_DONTNEED: Int32 = 4
 struct MappedFile:
     """Memory-mapped read-only view of a file."""
 
-    var ptr: UnsafePointer[UInt8, MutExternalOrigin]
+    var ptr: UnsafePointer[UInt8, MutUntrackedOrigin]
     var size: Int
     var _fd: Int32
 
@@ -47,8 +47,9 @@ struct MappedFile:
         self.size = Int(st.st_size)
 
         var null_terminated_path = path + "\0"
+        var c_path = CStringSlice(null_terminated_path)
         self._fd = external_call["open", Int32](
-            null_terminated_path.unsafe_ptr().bitcast[NoneType](),
+            c_path,
             Int32(O_RDONLY),
             Int32(0),
         )
@@ -56,9 +57,9 @@ struct MappedFile:
             raise Error("mmap: open() failed for: " + path)
 
         var raw = external_call[
-            "mmap", UnsafePointer[UInt8, MutExternalOrigin]
+            "mmap", UnsafePointer[UInt8, MutUntrackedOrigin]
         ](
-            UnsafePointer[UInt8, MutExternalOrigin](),  # addr = NULL
+            Optional[UnsafePointer[UInt8, MutUntrackedOrigin]](),
             self.size,
             PROT_READ,
             MAP_SHARED,
@@ -86,14 +87,13 @@ struct MappedFile:
             _ = external_call["munmap", Int32](
                 self.ptr.bitcast[NoneType](), self.size
             )
-            self.ptr = UnsafePointer[UInt8, MutExternalOrigin]()
         if self._fd >= 0:
             _ = external_call["close", Int32](self._fd)
             self._fd = -1
 
 
 def madvise_range(
-    ptr: UnsafePointer[UInt8, MutExternalOrigin], length: Int, advice: Int32
+    ptr: UnsafePointer[UInt8, MutUntrackedOrigin], length: Int, advice: Int32
 ):
     """Advise the kernel about a specific sub-range of a mapped region.
     Call with MADV_DONTNEED after a thread finishes its chunk to release

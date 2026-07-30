@@ -19,7 +19,7 @@ def parse_row[
     MAP_T: MapTracker,
 ](
     mut map: PerfectStationMap[MAP_TRACKER=MAP_T],
-    ptr: UnsafePointer[UInt8, MutExternalOrigin],
+    ptr: UnsafePointer[UInt8, MutUntrackedOrigin],
     name_start: Int,
     nl: Int,
     mut metrics: T,
@@ -58,7 +58,7 @@ def parse_chunk[
     MAP_T: MapTracker,
 ](
     mut map: PerfectStationMap[MAP_TRACKER=MAP_T],
-    ptr: UnsafePointer[UInt8, MutExternalOrigin],
+    ptr: UnsafePointer[UInt8, MutUntrackedOrigin],
     size: Int,
     mut metrics: T,
 ):
@@ -69,15 +69,25 @@ def parse_chunk[
     var row_start = 0
 
     while likely(i + 16 <= size):
+        comptime if T.ACTIVE:
+            metrics.record_simd_iteration()
         var chunk = ptr.load[width=16](i)
         var mask = chunk.eq(nl_vec)
 
         if likely(mask.reduce_or()):
+            comptime if T.ACTIVE:
+                metrics.record_simd_hit()
             var bytes = mask.cast[DType.uint8]() & 1
             var u64 = bitcast[DType.uint64, 2](bytes)
             var res0 = (u64[0] * 0x0102040810204080) >> 56
             var res1 = (u64[1] * 0x0102040810204080) >> 56
             var final_mask = Int(res0) | (Int(res1) << 8)
+
+            comptime if T.ACTIVE:
+                if (final_mask & (final_mask - 1)) == 0:
+                    metrics.record_single_newline_block()
+                else:
+                    metrics.record_multi_newline_block()
 
             while final_mask != 0:
                 var bit_idx = Int(count_trailing_zeros(final_mask))
@@ -85,6 +95,8 @@ def parse_chunk[
                 parse_row(map, ptr, row_start, nl, metrics)
                 row_start = nl + 1
                 final_mask &= final_mask - 1
+                comptime if T.ACTIVE:
+                    metrics.record_row_simd()
         i += 16
 
 

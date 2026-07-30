@@ -6,11 +6,17 @@ The strategy is chosen automatically based on file size to balance setup overhea
 
 | File size | Mode | Strategy | Reason |
 |---|---|---|---|
-| < 4 GB | `mmap` | `MADV_WILLNEED` | Pre-loads into RAM. Fastest for datasets that fit in available memory. |
-| ≥ 4 GB | `pread` | `DoubleBufferedStream` | Streams in 4MB aligned blocks with `F_NOCACHE` to bypass macOS buffer cache thrashing. |
+| < 2 GiB | `mmap` | Demand-paged mapping | Avoids eager preload overhead and lets parsing fault pages as needed. |
+| ≥ 2 GiB | `pread` | `DoubleBufferedStream` | Streams bounded 4 MiB blocks with `F_NOCACHE` to avoid page-cache thrashing. |
 
-**Key Insight:** For massive files (1B rows), `mmap` on macOS can suffer from severe page-fault latency when memory pressure is high. Using explicit `pread` into circular buffers bypasses the VM subsystem's complexity and achieves near-peak NVMe throughput.
+Each worker receives a shared, newline-aligned byte range. Reads are capped at
+that range, so workers do not overlap or omit records. Aggregation merges by
+stable perfect-hash slot; station names used for output come from the generated
+canonical station table rather than reusable stream buffers.
 
 ## Parallelization Pipeline
 
-Data is processed using `std.algorithm.parallelize`, scaling linearly with `num_logical_cores()`. Thread-local storage eliminates contention.
+Data is scheduled through a CPU `DeviceContext`. Each of the eight equal-byte
+tasks owns its map, and maps are merged after parsing without hot-loop atomics.
+The current 100M analysis measured only 3.52% closing task skew, so finer task
+subdivision or atomic work stealing is not part of the active path.

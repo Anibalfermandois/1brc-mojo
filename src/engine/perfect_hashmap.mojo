@@ -1,7 +1,13 @@
 from std.memory import UnsafePointer, alloc
 from misc.metrics import MapTracker, MapMetrics, EmptyMapMetrics
 from std.sys.intrinsics import likely, unlikely, assume
-from .stations_data import PERFECT_MULTIPLIER, PERFECT_CAPACITY, PERFECT_SHIFT
+from .stations_data import (
+    PERFECT_MULTIPLIER,
+    PERFECT_CAPACITY,
+    PERFECT_SHIFT,
+    STATION_HASHES,
+    STATION_NAMES,
+)
 
 
 @fieldwise_init
@@ -35,21 +41,21 @@ struct StationStats(TrivialRegisterPassable, ImplicitlyCopyable):
 @align(64)
 struct MapEntry(TrivialRegisterPassable, ImplicitlyCopyable):
     var stats: StationStats  # 16 bytes
-    var ptr: UnsafePointer[UInt8, MutExternalOrigin]  # 8 bytes
+    var ptr: UnsafePointer[UInt8, MutUntrackedOrigin]  # 8 bytes
     var length: Int32  # 4 bytes
     var padding: Int32  # 4 bytes
     # Total: 32 bytes
 
     def __init__(out self):
         self.stats = StationStats(min=999, max=-999, sum=0, count=0)
-        self.ptr = UnsafePointer[UInt8, MutExternalOrigin]()
+        self.ptr = UnsafePointer[UInt8, MutUntrackedOrigin].unsafe_dangling()
         self.length = 0
         self.padding = 0
 
     def __init__(
         out self,
         stats: StationStats,
-        ptr: UnsafePointer[UInt8, MutExternalOrigin],
+        ptr: UnsafePointer[UInt8, MutUntrackedOrigin],
         length: Int,
     ):
         self.stats = stats
@@ -64,7 +70,7 @@ struct PerfectStationMap[
     SHIFT: Int = PERFECT_SHIFT,
     MAP_TRACKER: MapTracker = EmptyMapMetrics,
 ](Copyable, Movable):
-    var data: UnsafePointer[MapEntry, MutExternalOrigin]
+    var data: UnsafePointer[MapEntry, MutUntrackedOrigin]
     var size: Int
     var metrics: Self.MAP_TRACKER
 
@@ -82,10 +88,10 @@ struct PerfectStationMap[
         self.size = copy.size
         self.metrics = copy.metrics
 
-    def __init__(out self, *, deinit take: Self):
-        self.data = take.data
-        self.size = take.size
-        self.metrics = take.metrics^
+    def __init__(out self, *, deinit move: Self):
+        self.data = move.data
+        self.size = move.size
+        self.metrics = move.metrics^
 
     def __del__(deinit self):
         self.data.free()
@@ -93,7 +99,7 @@ struct PerfectStationMap[
     @always_inline
     def update_or_insert(
         mut self,
-        ptr: UnsafePointer[UInt8, MutExternalOrigin],
+        ptr: UnsafePointer[UInt8, MutUntrackedOrigin],
         length: Int,
         temp: Int,
     ):
@@ -105,7 +111,7 @@ struct PerfectStationMap[
     @always_inline
     def update_or_insert_precomputed(
         mut self,
-        ptr: UnsafePointer[UInt8, MutExternalOrigin],
+        ptr: UnsafePointer[UInt8, MutUntrackedOrigin],
         length: Int,
         temp: Int,
         head: UInt64,
@@ -138,7 +144,7 @@ struct PerfectStationMap[
 
     def update_from_stats(
         mut self,
-        ptr: UnsafePointer[UInt8, MutExternalOrigin],
+        ptr: UnsafePointer[UInt8, MutUntrackedOrigin],
         length: Int,
         read incoming: StationStats,
     ):
@@ -164,27 +170,39 @@ struct PerfectStationMap[
             entry = MapEntry(incoming, ptr, length)
             self.size += 1
 
-    def merge_from(mut self, read other: Self):
+    def merge_from(mut self, imm other: Self):
         comptime if Self.MAP_TRACKER.ACTIVE:
             self.metrics.merge_from(other.metrics)
         for i in range(Self.CAPACITY):
             ref entry = other.data[i]
             if entry.stats.count > 0:
-                self.update_from_stats(
-                    entry.ptr, Int(entry.length), entry.stats
-                )
+                ref target = self.data[i]
+                if target.stats.count > 0:
+                    var stats = target.stats
+                    if Int32(entry.stats.min) < Int32(stats.min):
+                        stats.min = entry.stats.min
+                    if Int32(entry.stats.max) > Int32(stats.max):
+                        stats.max = entry.stats.max
+                    stats.sum += entry.stats.sum
+                    stats.count += entry.stats.count
+                    target.stats = stats
+                else:
+                    # The input pointer may refer to a reusable streaming
+                    # buffer, so only copy aggregate values across maps.
+                    target.stats = entry.stats
+                    self.size += 1
 
     def print_sorted(self):
         var sorted_keys = List[String](capacity=self.size)
         var slot_indices = List[Int](capacity=self.size)
-        for i in range(Self.CAPACITY):
-            if self.data[i].stats.count > 0:
-                slot_indices.append(i)
-                ref entry = self.data[i]
-                var chars = List[UInt8](capacity=Int(entry.length))
-                for j in range(Int(entry.length)):
-                    chars.append(entry.ptr[j])
-                sorted_keys.append(String(unsafe_from_utf8=chars))
+        comptime for station_index in range(len(STATION_NAMES)):
+            comptime station_hash = UInt64(STATION_HASHES[station_index])
+            comptime slot = Int(
+                (station_hash * Self.MULTIPLIER) >> UInt64(Self.SHIFT)
+            )
+            if self.data[slot].stats.count > 0:
+                slot_indices.append(slot)
+                sorted_keys.append(String(STATION_NAMES[station_index]))
         for x in range(len(sorted_keys)):
             var min_idx = x
             for y in range(x + 1, len(sorted_keys)):

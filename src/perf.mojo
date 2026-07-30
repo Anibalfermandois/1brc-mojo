@@ -1,7 +1,7 @@
-"""perf.mojo — 1BRC Unified Performance & Analysis Tool
+"""Run the unified 1BRC performance and analysis tool.
 
 Usage:
-    mojo run perf.mojo [filename] [--analyze]
+    mojo run perf.mojo [filename] [--analyze] [--force-streaming]
 
 This is the unified performance and analysis tool. If --analyze is passed,
 it runs with TRACK_METRICS=True, performing collision checks and deep
@@ -12,12 +12,13 @@ from std.sys import argv
 from std.sys.info import num_logical_cores
 from std.time import perf_counter_ns
 from misc.metrics import MapMetrics, EmptyMapMetrics, ParserMetrics, EmptyParserMetrics, MapTracker, ParserTracker
-from IO.mmap import MappedFile, MADV_SEQUENTIAL, MADV_WILLNEED, MADV_DONTNEED, madvise_range
+from IO.mmap import MappedFile
 from engine.perfect_hashmap import PerfectStationMap
 from engine.parser import parse_chunk
 from analyzer import run_analysis
-from IO.streaming import FileHandle, DoubleBufferedStream
-from std.algorithm import parallelize
+from IO.streaming import FileHandle, DoubleBufferedStream, find_first_newline
+from std.ffi import external_call
+from std.gpu.host import DeviceContext
 from std.compile import compile_info
 from std.benchmark import (
     Bench,
@@ -34,7 +35,7 @@ def run_pipeline[
     TRACK_METRICS: Bool, 
     once: Bool, 
     no_print: Bool
-](filename: String) raises:
+](filename: String, force_streaming: Bool) raises:
     comptime mode_str: String = "ANALYSIS" if TRACK_METRICS else "BENCHMARK"
 
     print("=" * 60)
@@ -47,10 +48,11 @@ def run_pipeline[
     var size = mapped.size
 
     comptime STREAMING_THRESHOLD = 2 * 1024 * 1024 * 1024  # 2 GB
-    var use_streaming = size >= STREAMING_THRESHOLD
-    
-    if not use_streaming:
-        mapped.advise(MADV_WILLNEED)
+    var use_streaming = force_streaming or size >= STREAMING_THRESHOLD
+
+    # Let sub-threshold mmap input fault on demand. In the warm-cache benchmark
+    # protocol this avoids a larger eager MADV_WILLNEED cost than it saves in
+    # parse time. Cold-cache behavior is intentionally a separate question.
     # If streaming, we close mmap and use DoubleBufferedStream instead
     # to avoid page-fault thrashing on MacOS.
 
@@ -68,9 +70,14 @@ def run_pipeline[
                 start_guess -= 1
             chunk_starts.append(start_guess)
     else:
-        # Approximate starts; DoubleBufferedStream will align them.
+        # Align each shared boundary once so adjacent workers neither overlap
+        # nor leave gaps. process_range() then honors these exact boundaries.
+        var alignment_handle = FileHandle(filename)
         for i in range(1, num_threads):
-            chunk_starts.append(i * chunk_size)
+            chunk_starts.append(
+                find_first_newline(alignment_handle, i * chunk_size)
+            )
+        alignment_handle.close()
     chunk_starts.append(size)
 
     var maps = List[PerfectStationMap[MAP_TRACKER=M]](capacity=num_threads)
@@ -86,9 +93,9 @@ def run_pipeline[
     # If we are in BENCHMARK mode, we use it to get high-precision engine stats
     
     @parameter
-    fn run_parallel[STREAMING: Bool]():
+    def run_parallel[STREAMING: Bool]():
         @parameter
-        fn process_chunk(tid: Int):
+        def process_chunk(tid: Int):
             var start      = chunk_starts[tid]
             var end        = chunk_starts[tid + 1]
             var maps_ptr   = maps.unsafe_ptr()
@@ -100,17 +107,41 @@ def run_pipeline[
                     var handle = FileHandle(filename)
                     handle.set_nocache()
                     var stream = DoubleBufferedStream(handle)
-                    stream.process_range[P,M](maps_ptr[tid], start, end, thread_metrics)
+                    stream.process_range[P,M](
+                        maps_ptr[unsafe_offset=tid],
+                        start,
+                        end,
+                        thread_metrics,
+                    )
                     stream.close()
                     handle.close()
                 except e:
                     print("Streaming error in thread ", tid, ": ", e)
+                    # parallelize() requires a non-raising worker in this pinned
+                    # Mojo toolchain. Terminate rather than return partial data.
+                    external_call["exit", NoneType](Int32(1))
             else:
                 var chunk_ptr  = ptr + start
                 var chunk_len  = end - start
-                parse_chunk[P, M](maps_ptr[tid], chunk_ptr, chunk_len, thread_metrics)
+                parse_chunk[P, M](
+                    maps_ptr[unsafe_offset=tid],
+                    chunk_ptr,
+                    chunk_len,
+                    thread_metrics,
+                )
         
-        parallelize[process_chunk](num_threads)
+        def process_chunk_unified(tid: Int):
+            process_chunk(tid)
+
+        try:
+            var cpu_ctx = DeviceContext(api="cpu")
+            cpu_ctx.enqueue_cpu_range(
+                process_chunk_unified, count=num_threads
+            )
+            cpu_ctx.synchronize()
+        except e:
+            print("Parallel runtime error: ", e)
+            external_call["exit", NoneType](Int32(1))
 
     comptime if not TRACK_METRICS and not once:
         # We use std.benchmark for the actual parsing phase
@@ -122,7 +153,7 @@ def run_pipeline[
         var b = Bench(config.copy())
 
         @parameter
-        fn bench_parse(mut bencher: Bencher):
+        def bench_parse(mut bencher: Bencher):
             if use_streaming:
                 bencher.iter[run_parallel[True]]()
             else:
@@ -175,23 +206,25 @@ def main() raises:
     var analyze_mode = False
     var once_mode = False
     var no_print = False
+    var force_streaming = False
 
     for i in range(1, len(args)):
         var arg = args[i]
         if   arg == "--analyze" or arg == "-a": analyze_mode = True
         elif arg == "--once":                   once_mode = True
         elif arg == "--no-print":               no_print = True
+        elif arg == "--force-streaming":        force_streaming = True
         else:                                   filename = arg
 
     # Generic dispatch helper to bridge runtime flags to comptime specializations
     @parameter
-    fn dispatch[M: MapTracker, P: ParserTracker, TRACK: Bool]() raises:
+    def dispatch[M: MapTracker, P: ParserTracker, TRACK: Bool]() raises:
         if once_mode:
-            if no_print: run_pipeline[M, P, TRACK, True, True](filename)
-            else:        run_pipeline[M, P, TRACK, True, False](filename)
+            if no_print: run_pipeline[M, P, TRACK, True, True](filename, force_streaming)
+            else:        run_pipeline[M, P, TRACK, True, False](filename, force_streaming)
         else:
-            if no_print: run_pipeline[M, P, TRACK, False, True](filename)
-            else:        run_pipeline[M, P, TRACK, False, False](filename)
+            if no_print: run_pipeline[M, P, TRACK, False, True](filename, force_streaming)
+            else:        run_pipeline[M, P, TRACK, False, False](filename, force_streaming)
 
     if analyze_mode:
         dispatch[MapMetrics, ParserMetrics, True]()
