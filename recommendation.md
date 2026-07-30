@@ -2,18 +2,21 @@
 
 ## Recommendation
 
-Keep the CPU implementation as the reference path and improve it before making
-GPU execution part of the main program.
+Keep the CPU implementation as the correctness and end-to-end performance
+reference. Keep GPU work isolated until parsing, aggregation, and input
+preparation all pass their individual gates.
 
 Pursue the GPU as a bounded research track. The most credible destination is a
 heterogeneous implementation in which the CPU and GPU process independent byte
 ranges and merge their 413-station result maps. Do not use a fixed 50/50 split:
 assign work according to measured CPU and GPU throughput while both are active.
 
-The previous GPU result does not rule this out. It measured an intentionally
-underutilized kernel, not a GPU-shaped implementation. A redesigned kernel may
-be competitive, but the workload's low arithmetic intensity, divergent parsing,
-and shared memory bandwidth remain fundamental risks.
+The occupied scan and temperature-only kernels have passed their gates. On the
+100M input the GPU counted newlines 2.63–2.71x as fast as the parallel CPU SIMD
+scanner. Adding exact fixed-point temperature parsing reduced the advantage to
+1.30–1.34x. The next gate is dense station indexing and workgroup aggregation.
+Input preparation remains a separate blocker: the warm copied-buffer path took
+193–245 ms before either kernel.
 
 ## Assessment of the CPU Kernel
 
@@ -152,9 +155,9 @@ Lazy mmap is the only promoted candidate from the old-document audit. Removing
 reduces warm end-to-end wall time materially. Cold-cache behavior is not
 claimed because shared system caches were not flushed during normal PC use.
 
-## What the Previous GPU Experiment Established
+## GPU Evidence
 
-The previous kernel used:
+The CPU-shaped parser prototype used:
 
 - 256 total GPU threads;
 - `block_dim=1`;
@@ -174,11 +177,40 @@ This leaves most GPU SIMD lanes inactive and gives each thread a 768 KiB working
 set. The experiment confirms that the CPU-shaped chunking model maps poorly to a
 GPU. It does not establish that an occupied, cooperative GPU kernel is slower.
 
-The documented data-transfer cost also does not explain the kernel result by
-itself. The experiment copied the mapped file into a host buffer and then into a
-device buffer, while the kernel remained roughly ten times slower than the CPU
-parse phase. Occupancy, scalar scanning, and result layout were major limitations
-in addition to memory traffic.
+The occupied scan-only prototype uses 256 blocks of 256 threads. Adjacent lanes
+perform coalesced grid-stride byte reads and write private newline counters, so
+there is no atomic or shared-table contention in this gate.
+
+| 100M resident-data scan | CPU SIMD | GPU kernel | GPU advantage |
+|---|---:|---:|---:|
+| First series median | 61.386 ms | 22.620 ms | 2.71x |
+| Warm repeat median | 62.357 ms | 23.685 ms | 2.63x |
+
+Both series produced exactly 99,999,387 newlines before and after timing. The
+warm GPU series had 1.551 ms MAD and 3.313 ms IQR under normal machine use,
+without weakening an effect above 160%.
+
+The current high-level input path still copies the mmap into a Metal
+`DeviceBuffer`. It took 2,077.689 ms immediately after materialization and
+245.106 ms with warm file data. The cold number includes file faults; the warm
+number alone is enough to show that a full-file copy erases the kernel
+advantage. Raw samples are under
+`results/benchmarks/20260730-gpu-scan-{cold,warm}/`.
+
+The temperature-only kernel reads the four relevant temperature bytes at every
+newline and writes one row count and temperature sum per GPU thread. It does
+not hash station names or aggregate by station.
+
+| 100M temperature parsing | CPU SIMD | GPU kernel | GPU advantage |
+|---|---:|---:|---:|
+| First series median | 79.495 ms | 61.286 ms | 1.30x |
+| Warm repeat median | 79.570 ms | 59.211 ms | 1.34x |
+
+Both series produced 99,999,387 rows and an exact fixed-point sum of
+17,828,649,656 before and after timing. Parsing consumes most of the scan-only
+advantage: station indexing and aggregation have only about 20 ms of isolated
+headroom over the equivalent CPU temperature parser. Raw samples are under
+`results/benchmarks/20260730-gpu-temperature-{a,warm}/`.
 
 ## Proposed GPU Architecture
 
@@ -262,11 +294,12 @@ Before comparing implementations:
 5. Treat effects below 5% as inconclusive unless repeated evidence clearly
    exceeds observed dispersion.
 
-Then build the GPU investigation incrementally:
+Build the GPU investigation incrementally:
 
-1. Count newlines on resident data and measure kernel-only throughput.
-2. Add row and temperature parsing without aggregation.
-3. Add dense threadgroup aggregation.
+1. **Passed:** count newlines on resident data and materially exceed the CPU
+   scanner.
+2. **Passed:** add row and temperature parsing without aggregation.
+3. **Next:** add dense station indexing and threadgroup aggregation.
 4. Measure input preparation, kernel execution, and result reduction separately.
 5. Compare CPU-only, GPU-only, fixed-split hybrid, and throughput-weighted hybrid.
 6. Repeat on both warm resident input and cold or larger-than-memory input.
@@ -292,13 +325,10 @@ entries, peeled newline handling, mask-guard removal, and work stealing. The
 regenerated streaming curve and lazy-mmap series are the performance baselines
 for future comparisons.
 
-A GPU revisit is technically justified because the previous prototype did not
-exercise the GPU effectively. The likely benefit is bounded: a large pure-GPU
-victory is unlikely, while a moderate CPU+GPU improvement is plausible if the
-GPU uses workgroup-local aggregation, the input is GPU-visible without a
-full-file copy, and the CPU leaves meaningful shared-memory bandwidth available.
-
-Before GPU work, inspect the optimized assembly and available compiler IR for
-remaining CPU inefficiencies. Proceed with GPU work only after that review,
-using an isolated prototype with explicit kill criteria. Promote a GPU or
-hybrid path only if it wins on exact, end-to-end wall time.
+The GPU byte scanner and temperature parser are fast enough to justify one
+workgroup-aggregation experiment. This does not yet justify a GPU or hybrid
+production path: the current copied input path is already slower than the CPU
+parser end to end, and station indexing plus aggregation may consume the
+remaining 1.30–1.34x kernel advantage. Continue in the isolated prototype with
+explicit stop conditions. Promote a GPU or hybrid path only if it wins on exact,
+end-to-end wall time with measured input preparation.

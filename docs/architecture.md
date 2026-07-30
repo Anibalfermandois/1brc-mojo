@@ -36,10 +36,16 @@ For detailed results, see [Benchmarks](benchmarks.md) and [Performance Log](perf
 ### 4. Hardware Portability & Scaling
 - Dynamic core allocation and universal SIMD width (128-bit) for ARM NEON support.
 - File-size-based selection between mmap and bounded streaming.
+- An isolated Metal scanner establishes a 58–61 GB/s resident-data GPU ceiling.
+  Fixed-point temperature parsing retains a smaller 1.30–1.34x GPU advantage.
+  Neither kernel is part of the production path while copied input remains
+  slower end to end.
 
 ---
 
 ## Appendix: Lessons Learned
 
 - **[Failed Optimizations](lessons_learned/failed_optimizations.md)**: Records of attempts that regressed performance (e.g., 32-byte unrolling, software prefetching).
-- **[GPU Investigation](lessons_learned/gpu_investigation.md)**: Analysis of why CPU outperforms GPU for this specific memory-bound task.
+- **[GPU Investigation](lessons_learned/gpu_investigation.md)**: Current Metal
+  scan result, input-path constraint, and the remaining parser and aggregation
+  gates.

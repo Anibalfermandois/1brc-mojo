@@ -39,9 +39,43 @@ pixi run bench-600m
 pixi run bench-1b
 ```
 
+Run the isolated resident-data GPU scan gate with:
+
+```bash
+pixi run gpu-scan
+```
+
+This requires the official `modular` runtime and Xcode Metal Toolchain. It
+reports input staging separately, validates newline counts and temperature
+sums, and retains five CPU-GPU-GPU-CPU timing pairs for each stage.
+
 Each run uses reduced process priority, performs one warmup, pauses briefly
 between samples, and writes raw CSV, summary statistics, source fingerprint,
 toolchain, memory, load, and Git metadata under `results/benchmarks/`.
+
+## GPU Scan Gate — 2026-07-30
+
+The occupied Apple M3 kernel passed the resident-data scan gate:
+
+| 100M series | CPU SIMD median | GPU kernel median | GPU advantage | Staging |
+|---|---:|---:|---:|---:|
+| First run | 61.386 ms | 22.620 ms | 2.71x | 2,077.689 ms |
+| Warm repeat | 62.357 ms | 23.685 ms | 2.63x | 245.106 ms |
+
+All runs counted exactly 99,999,387 newlines. The copied-buffer input path is
+not competitive end to end. Raw evidence is under
+`results/benchmarks/20260730-gpu-scan-{cold,warm}/`.
+
+The temperature-only stage also passed:
+
+| 100M series | CPU temperature median | GPU temperature median | GPU advantage |
+|---|---:|---:|---:|
+| First run | 79.495 ms | 61.286 ms | 1.30x |
+| Warm repeat | 79.570 ms | 59.211 ms | 1.34x |
+
+All runs produced the exact fixed-point temperature sum 17,828,649,656. The
+next gate is dense station indexing and workgroup aggregation. Raw evidence is
+under `results/benchmarks/20260730-gpu-temperature-{a,warm}/`.
 
 ## Metrics
 

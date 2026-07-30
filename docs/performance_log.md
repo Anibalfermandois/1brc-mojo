@@ -1,5 +1,46 @@
 # 1BRC Mojo — Performance Log
 
+## Occupied GPU Newline Scanner — 2026-07-30
+
+The stage-one Metal prototype uses 256 blocks of 256 threads, coalesced
+grid-stride byte reads, and one private newline counter per thread. It was
+compared with an eight-thread CPU scanner using the production 16-byte
+SIMD/SWAR mask. Five CPU-GPU-GPU-CPU pairs were retained per series under
+normal concurrent machine use.
+
+| 100M series | CPU median | CPU MAD | GPU median | GPU MAD | Ratio |
+|---|---:|---:|---:|---:|---:|
+| First run | 61.386 ms | 0.304 ms | 22.620 ms | 0.617 ms | 2.71x |
+| Warm repeat | 62.357 ms | 0.938 ms | 23.685 ms | 1.551 ms | 2.63x |
+
+Both paths counted exactly 99,999,387 newlines before and after timing. The
+resident-data GPU scanner sustains 58.25–60.99 GB/s versus 22.12–22.47 GB/s
+for the CPU scanner, so the first GPU gate passes.
+
+The copied input path does not pass end to end. Staging 1,379,614,933 bytes
+into a Metal `DeviceBuffer` took 2,077.689 ms immediately after dataset
+materialization and 245.106 ms on the warm repeat. Treat zero-copy or direct
+GPU-visible input as a required independent track. Raw samples and metadata are
+under `results/benchmarks/20260730-gpu-scan-{cold,warm}/`.
+
+### Temperature parsing without aggregation
+
+The second kernel retains the coalesced byte scan and parses the four
+fixed-point temperature bytes at every newline. It writes only one row count
+and temperature sum per GPU thread. The CPU reference uses the same 16-byte
+SIMD newline mask and performs the same temperature arithmetic.
+
+| 100M series | CPU median | CPU MAD | GPU median | GPU MAD | Ratio |
+|---|---:|---:|---:|---:|---:|
+| First run | 79.495 ms | 0.127 ms | 61.286 ms | 2.994 ms | 1.30x |
+| Warm repeat | 79.570 ms | 0.220 ms | 59.211 ms | 2.098 ms | 1.34x |
+
+Both series produced exactly 99,999,387 rows and a fixed-point temperature sum
+of 17,828,649,656 before and after timing. Temperature parsing preserves a
+repeatable GPU advantage but consumes most of the scan-only lead. Proceed to
+one station-indexing and dense workgroup-aggregation experiment. Raw evidence
+is under `results/benchmarks/20260730-gpu-temperature-{a,warm}/`.
+
 ## Mojo 1.0 Nightly Upgrade — 2026-07-30
 
 Mojo `1.0.0b3.dev2026073014` passes the 413-station oracle in mmap and forced
