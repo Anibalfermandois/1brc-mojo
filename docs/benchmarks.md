@@ -139,6 +139,10 @@ and the two pair directions contradict each other. Keep `@align(64)` and treat
 the experiment as neutral. Raw samples are under
 `results/benchmarks/20260730-map-align-*`.
 
+Subsequent compiler inspection showed that both variants retained a 32-byte
+element stride. The annotation changed the allocation-base alignment, not the
+distance between adjacent `MapEntry` values.
+
 ## Four-Vector Newline Scan Experiment — 2026-07-30
 
 The current 16-byte NEON loop (A) was compared with a four-load, 64-byte

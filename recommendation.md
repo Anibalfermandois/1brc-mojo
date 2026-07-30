@@ -30,11 +30,12 @@ The remaining CPU opportunities are refinements rather than a new algorithm:
 
 1. Keep the 16-byte newline loop. A current-mask four-vector/64-byte experiment
    did not produce a repeatable 5% improvement under normal concurrent use.
-2. Keep `@align(64)` as a neutral incumbent. Its isolated 2026-07-30
-   `A-B-B-A` test found only −0.44% wall and −2.82% parse for removing it in
-   the reliable closing pair, below the 5% threshold.
-3. Keep compact statistics. Native-width fields made the closing comparison
-   0.79% slower wall and 5.01% slower parse without changing the 64-byte stride.
+2. Treat `@align(64)` as a neutral allocation-base setting. Compiler inspection
+   shows a 32-byte `MapEntry` stride with a 64-byte-aligned allocation; the
+   isolated 2026-07-30 test therefore did not compare 64- and 32-byte slots.
+3. Keep compact statistics. The rejected native-width experiment changed the
+   entry from 32 to 48 bytes as well as changing accumulator arithmetic, so it
+   rejects that combined variant rather than isolating either effect.
 4. Keep the ordinary newline-mask loop and its `reduce_or()` guard. Peeling was
    neutral; removing the guard improved parse slightly but did not improve wall.
 5. Keep one equal-byte task per logical core. Current analysis measured only
@@ -50,6 +51,38 @@ The remaining CPU opportunities are refinements rather than a new algorithm:
 Software prefetching, SIMD gathers, staged parsing, smaller sparse maps, and a
 SIMD reverse scan have already shown poor or neutral results and should not be
 prioritized without evidence that compiler or hardware behavior has changed.
+
+### Compiler inspection checkpoint
+
+The optimized Apple M3 assembly for checkpoint `be84477` is already strong:
+`parse_row()` and map updates are fully inlined, analysis trackers disappear
+from the release specialization, the 16-byte newline loop has no body spills,
+and temperature parsing lowers to compact bitfield and conditional-select
+instructions. The installed nightly exposes optimized assembly and unoptimized
+LLVM IR, but no supported MLIR dump.
+
+The inspection did find a safety issue to repair before performance work. The
+record-dependent `UInt64` temperature load and `UInt32` name-head load are
+generally unaligned, but the emitted LLVM IR claims alignments of eight and four
+bytes. Both loads should declare `alignment=1`. The earliest legal newline can
+also make the first temperature load begin one byte before its chunk, so the
+first row of each chunk needs an explicit bounded treatment.
+
+After that repair, test these CPU candidates independently:
+
+1. Remove release-only first-insert bookkeeping while retaining the 32-byte
+   layout. Canonical station data made `ptr` and `length` write-only, yet every
+   row still branches on `count`; keep that branch only in analysis mode.
+2. Remove the dead name metadata in a separate step, producing a 16-byte
+   stats-only entry without changing the perfect-hash capacity or multiplier.
+3. Replace the full 16,384-slot-per-worker merge scan with a runtime loop over
+   the 413 generated occupied slots.
+4. For streaming, avoid retaining an unused mmap and test a single reusable
+   buffer. The current two buffers are synchronous rather than overlapping I/O
+   with parsing.
+5. Only then try earlier hash scheduling or a packed statistics header. Reject
+   the packed form before timing unless its assembly materially reduces memory
+   operations without spills or a longer instruction path.
 
 ## Regenerated CPU Evidence
 
@@ -97,7 +130,8 @@ future hybrid experiments.
 The isolated `MapEntry` alignment experiment did not justify a source change.
 One A leg landed in a faster whole-machine session, but the closing unaligned
 B2 versus aligned A2 comparison differed by only −0.44% wall and −2.82% parse.
-Keep the aligned layout.
+Keep the annotation as a neutral incumbent. It aligns the allocation base in
+this compiler; it does not pad each array element to 64 bytes.
 
 The isolated 64-byte newline scan also did not justify a source change. Its
 three adjacent B/A comparisons were +8.39%, −1.74%, and −1.60% wall and
@@ -246,12 +280,12 @@ Stop the investigation if any of these remain true after the workgroup redesign:
 ## Decision
 
 The CPU implementation remains the performance and correctness reference.
-Use the native 16-byte newline loop, compact statistics, `@align(64)`, one
-equal-byte task per logical core, and demand-paged mmap below 2 GiB. Controlled
-experiments rejected the 64-byte unroll, unaligned entries, native-width
-statistics, peeled newline handling, mask-guard removal, and work stealing.
-The regenerated streaming curve and lazy-mmap series are the performance
-baselines for future comparisons.
+Use the native 16-byte newline loop, compact statistics, one equal-byte task per
+logical core, and demand-paged mmap below 2 GiB. Keep `@align(64)` only as a
+neutral allocation-base setting. Controlled experiments rejected the 64-byte
+unroll, removal of that base alignment, native-width statistics, peeled newline
+handling, mask-guard removal, and work stealing. The regenerated streaming
+curve and lazy-mmap series are the performance baselines for future comparisons.
 
 A GPU revisit is technically justified because the previous prototype did not
 exercise the GPU effectively. The likely benefit is bounded: a large pure-GPU

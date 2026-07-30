@@ -32,8 +32,9 @@ An 11-sample-per-leg `A-B-B-A` comparison removed only `@align(64)` from
 `MapEntry`. The closing B2/A2 comparison favored the unaligned variant by
 0.44% wall and 2.82% parse, below the 5% threshold. A1 was a fast-session
 outlier and made the paired directions contradictory. The change was rejected
-and alignment remains in the source. Raw evidence is under
-`results/benchmarks/20260730-map-align-*`.
+and alignment remains in the source. Later compiler inspection established that
+the annotation aligns the allocation base to 64 bytes while entries retain a
+32-byte stride. Raw evidence is under `results/benchmarks/20260730-map-align-*`.
 
 ### Four-vector newline scan
 
