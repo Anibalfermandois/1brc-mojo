@@ -19,3 +19,4 @@ bench-600m = { cmd = "entrypoints/bench.sh measurements_600m.txt 11", descriptio
 bench-1b = { cmd = "entrypoints/bench.sh measurements_1b.txt 11", description = "Bench 1b file, 11 runs" }
 analyze = { cmd = "entrypoints/analyze.sh", description = "Deep analysis (collisions & metrics)" }
 gpu-scan = { cmd = "entrypoints/gpu-scan.sh", description = "Run resident-data GPU scan, temperature, and station-index gates" }
+gpu-zero-copy = { cmd = "entrypoints/gpu-zero-copy.sh", description = "Run mmap-backed Metal scan, temperature, and station gates" }

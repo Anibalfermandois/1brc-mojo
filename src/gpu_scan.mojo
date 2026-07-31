@@ -47,15 +47,16 @@ comptime ALICE_SPRINGS_ID = 83
 comptime PALM_SPRINGS_ID = 147
 comptime LAST_DENSE_ID = len(STATION_HASHES) - 1
 
+
 def gpu_count_newlines(
     data: UnsafePointer[UInt8, MutAnyOrigin],
     counts: UnsafePointer[Int64, MutAnyOrigin],
     size: Int,
 ):
     """Count newlines with coalesced grid-stride reads and private counters."""
-    var tid = Int(global_idx.x)
-    var count = Int64(0)
-    var i = tid
+    tid = Int(global_idx.x)
+    count = Int64(0)
+    i = tid
 
     while i < size:
         count += Int64(data[i] == UInt8(10))
@@ -70,27 +71,26 @@ def gpu_parse_temperatures(
     sums: UnsafePointer[Int64, MutAnyOrigin],
     size: Int,
 ):
-    """Parse the fixed-point temperature at each newline, without aggregation."""
-    var tid = Int(global_idx.x)
-    var count = Int64(0)
-    var total = Int64(0)
-    var i = tid
+    """Parse the fixed-point temperature at each newline, without aggregation.
+    """
+    tid = Int(global_idx.x)
+    count = Int64(0)
+    total = Int64(0)
+    i = tid
 
     while i < size:
         if data[i] == UInt8(10):
             # Valid 1BRC rows place the earliest newline at byte seven. Read
             # only the four temperature bytes used by the CPU parser, avoiding
             # the first-row left overread of a blanket backward 64-bit load.
-            var c_frac = Int(data[i - 1] & 0x0F)
-            var c_units = Int(data[i - 3] & 0x0F)
-            var c4 = Int(data[i - 4])
-            var c5 = Int(data[i - 5])
-            var c4_val = c4 & 0x0F
-            var has_tens = Int(c4_val <= 9)
-            var is_neg = Int(c4 == 45) | Int(c5 == 45)
-            var temp = (
-                (c4_val * has_tens * 100) + (c_units * 10) + c_frac
-            )
+            c_frac = Int(data[i - 1] & 0x0F)
+            c_units = Int(data[i - 3] & 0x0F)
+            c4 = Int(data[i - 4])
+            c5 = Int(data[i - 5])
+            c4_val = c4 & 0x0F
+            has_tens = Int(c4_val <= 9)
+            is_neg = Int(c4 == 45) | Int(c5 == 45)
+            temp = (c4_val * has_tens * 100) + (c_units * 10) + c_frac
             temp *= 1 - is_neg * 2
             total += Int64(temp)
             count += 1
@@ -112,82 +112,72 @@ def gpu_index_stations(
     size: Int,
 ):
     """Map stations by their unique normalized eight-byte suffix."""
-    var tid = Int(global_idx.x)
-    var count = Int64(0)
-    var temp_total = Int64(0)
-    var dense_total = Int64(0)
-    var dense_sq_total = Int64(0)
-    var invalid = Int64(0)
-    var i = tid
+    tid = Int(global_idx.x)
+    count = Int64(0)
+    temp_total = Int64(0)
+    dense_total = Int64(0)
+    dense_sq_total = Int64(0)
+    invalid = Int64(0)
+    i = tid
 
     while i < size:
         if data[i] == UInt8(10):
-            var c_frac = Int(data[i - 1] & 0x0F)
-            var c_units = Int(data[i - 3] & 0x0F)
-            var c4 = Int(data[i - 4])
-            var c5 = Int(data[i - 5])
-            var c4_val = c4 & 0x0F
-            var has_tens = Int(c4_val <= 9)
-            var is_neg = Int(c4 == 45) | Int(c5 == 45)
-            var temp = (
-                (c4_val * has_tens * 100) + (c_units * 10) + c_frac
-            )
+            c_frac = Int(data[i - 1] & 0x0F)
+            c_units = Int(data[i - 3] & 0x0F)
+            c4 = Int(data[i - 4])
+            c5 = Int(data[i - 5])
+            c4_val = c4 & 0x0F
+            has_tens = Int(c4_val <= 9)
+            is_neg = Int(c4 == 45) | Int(c5 == 45)
+            temp = (c4_val * has_tens * 100) + (c_units * 10) + c_frac
             temp *= 1 - is_neg * 2
 
             # Temperature text is always one of x.x, xx.x, -x.x, -xx.x.
             # This gives the semicolon without another forward search.
-            var temp_width = 6 - Int(c5 == 59) - 2 * Int(c4 == 59)
-            var semicolon = i - temp_width
+            temp_width = 6 - Int(c5 == 59) - 2 * Int(c4 == 59)
+            semicolon = i - temp_width
 
             # Normalize the full name for short stations and the last eight
             # bytes for longer stations. The only suffix collision in the
             # generated universe is resolved with the ninth byte below.
-            var suffix_key = UInt64(0)
+            suffix_key = UInt64(0)
             if semicolon >= 8:
-                suffix_key = (data + semicolon - 8).bitcast[
-                    UInt64
-                ]().load[alignment=1]()
-                var newline_xor = (
-                    suffix_key ^ UInt64(0x0A0A0A0A0A0A0A0A)
+                suffix_key = (
+                    (data + semicolon - 8).bitcast[UInt64]().load[alignment=1]()
                 )
-                var newline_bits = (
+                newline_xor = suffix_key ^ UInt64(0x0A0A0A0A0A0A0A0A)
+                newline_bits = (
                     (newline_xor - UInt64(0x0101010101010101))
                     & ~newline_xor
                     & UInt64(0x8080808080808080)
                 )
                 if newline_bits != 0:
-                    var newline_byte = (
+                    newline_byte = (
                         63 - Int(count_leading_zeros(newline_bits))
                     ) // 8
                     suffix_key >>= UInt64((newline_byte + 1) * 8)
             else:
-                var byte_index = 0
+                byte_index = 0
                 while byte_index < semicolon:
-                    suffix_key |= (
-                        UInt64(data[byte_index])
-                        << UInt64(byte_index * 8)
+                    suffix_key |= UInt64(data[byte_index]) << UInt64(
+                        byte_index * 8
                     )
                     byte_index += 1
 
-            var dense = -1
-            var slot = Int(
-                (suffix_key * SUFFIX_MULTIPLIER)
-                >> UInt64(SUFFIX_SHIFT)
-            )
-            var word_index = slot >> 6
-            var bit_index = slot & 63
-            var slot_bit = UInt64(1) << UInt64(bit_index)
+            dense = -1
+            slot = Int((suffix_key * SUFFIX_MULTIPLIER) >> UInt64(SUFFIX_SHIFT))
+            word_index = slot >> 6
+            bit_index = slot & 63
+            slot_bit = UInt64(1) << UInt64(bit_index)
             if suffix_occupancy[word_index] & slot_bit != 0:
-                var lower_bits = suffix_occupancy[word_index] & (
+                lower_bits = suffix_occupancy[word_index] & (
                     slot_bit - UInt64(1)
                 )
-                dense = (
-                    Int(suffix_prefix[word_index])
-                    + Int(pop_count(lower_bits))
+                dense = Int(suffix_prefix[word_index]) + Int(
+                    pop_count(lower_bits)
                 )
-            if (
-                suffix_key == SPRINGS_SUFFIX
-                and data[semicolon - 9] == UInt8(109)
+            if suffix_key == SPRINGS_SUFFIX and data[semicolon - 9] == UInt8(
+                109
             ):
                 dense = LAST_DENSE_ID
 
@@ -215,18 +205,18 @@ def count_newlines_simd(
     """Count newlines with the production parser's 16-byte SIMD/SWAR mask."""
     comptime width = 16
     comptime nl_vec = SIMD[DType.uint8, width](10)
-    var count = 0
-    var i = 0
+    count = 0
+    i = 0
 
     while i + width <= size:
-        var chunk = ptr.load[width=width](i)
-        var mask = chunk.eq(nl_vec)
+        chunk = ptr.load[width=width](i)
+        mask = chunk.eq(nl_vec)
         if mask.reduce_or():
-            var bytes = mask.cast[DType.uint8]() & 1
-            var u64 = bitcast[DType.uint64, 2](bytes)
-            var res0 = (u64[0] * 0x0102040810204080) >> 56
-            var res1 = (u64[1] * 0x0102040810204080) >> 56
-            var final_mask = Int(res0) | (Int(res1) << 8)
+            bytes = mask.cast[DType.uint8]() & 1
+            u64 = bitcast[DType.uint64, 2](bytes)
+            res0 = (u64[0] * 0x0102040810204080) >> 56
+            res1 = (u64[1] * 0x0102040810204080) >> 56
+            final_mask = Int(res0) | (Int(res1) << 8)
             while final_mask != 0:
                 count += 1
                 final_mask &= final_mask - 1
@@ -246,33 +236,29 @@ def parse_temperatures_simd(
     """Return row count and temperature sum using the CPU SIMD newline mask."""
     comptime width = 16
     comptime nl_vec = SIMD[DType.uint8, width](10)
-    var count = 0
-    var total = Int64(0)
-    var i = 0
+    count = 0
+    total = Int64(0)
+    i = 0
 
     while i + width <= size:
-        var chunk = ptr.load[width=width](i)
-        var mask = chunk.eq(nl_vec)
+        chunk = ptr.load[width=width](i)
+        mask = chunk.eq(nl_vec)
         if mask.reduce_or():
-            var bytes = mask.cast[DType.uint8]() & 1
-            var u64 = bitcast[DType.uint64, 2](bytes)
-            var res0 = (u64[0] * 0x0102040810204080) >> 56
-            var res1 = (u64[1] * 0x0102040810204080) >> 56
-            var final_mask = Int(res0) | (Int(res1) << 8)
+            bytes = mask.cast[DType.uint8]() & 1
+            u64 = bitcast[DType.uint64, 2](bytes)
+            res0 = (u64[0] * 0x0102040810204080) >> 56
+            res1 = (u64[1] * 0x0102040810204080) >> 56
+            final_mask = Int(res0) | (Int(res1) << 8)
             while final_mask != 0:
-                var nl = i + Int(count_trailing_zeros(final_mask))
-                var c_frac = Int(ptr[nl - 1] & 0x0F)
-                var c_units = Int(ptr[nl - 3] & 0x0F)
-                var c4 = Int(ptr[nl - 4])
-                var c5 = Int(ptr[nl - 5])
-                var c4_val = c4 & 0x0F
-                var has_tens = Int(c4_val <= 9)
-                var is_neg = Int(c4 == 45) | Int(c5 == 45)
-                var temp = (
-                    (c4_val * has_tens * 100)
-                    + (c_units * 10)
-                    + c_frac
-                )
+                nl = i + Int(count_trailing_zeros(final_mask))
+                c_frac = Int(ptr[nl - 1] & 0x0F)
+                c_units = Int(ptr[nl - 3] & 0x0F)
+                c4 = Int(ptr[nl - 4])
+                c5 = Int(ptr[nl - 5])
+                c4_val = c4 & 0x0F
+                has_tens = Int(c4_val <= 9)
+                is_neg = Int(c4 == 45) | Int(c5 == 45)
+                temp = (c4_val * has_tens * 100) + (c_units * 10) + c_frac
                 temp *= 1 - is_neg * 2
                 total += Int64(temp)
                 count += 1
@@ -281,16 +267,14 @@ def parse_temperatures_simd(
 
     while i < size:
         if ptr[i] == 10:
-            var c_frac = Int(ptr[i - 1] & 0x0F)
-            var c_units = Int(ptr[i - 3] & 0x0F)
-            var c4 = Int(ptr[i - 4])
-            var c5 = Int(ptr[i - 5])
-            var c4_val = c4 & 0x0F
-            var has_tens = Int(c4_val <= 9)
-            var is_neg = Int(c4 == 45) | Int(c5 == 45)
-            var temp = (
-                (c4_val * has_tens * 100) + (c_units * 10) + c_frac
-            )
+            c_frac = Int(ptr[i - 1] & 0x0F)
+            c_units = Int(ptr[i - 3] & 0x0F)
+            c4 = Int(ptr[i - 4])
+            c5 = Int(ptr[i - 5])
+            c4_val = c4 & 0x0F
+            has_tens = Int(c4_val <= 9)
+            is_neg = Int(c4 == 45) | Int(c5 == 45)
+            temp = (c4_val * has_tens * 100) + (c_units * 10) + c_frac
             temp *= 1 - is_neg * 2
             total += Int64(temp)
             count += 1
@@ -309,55 +293,50 @@ def index_stations_simd(
     """Index stations for newlines in one byte range with SIMD discovery."""
     comptime width = 16
     comptime nl_vec = SIMD[DType.uint8, width](10)
-    var count = Int64(0)
-    var temp_total = Int64(0)
-    var dense_total = Int64(0)
-    var dense_sq_total = Int64(0)
-    var invalid = Int64(0)
-    var row_start = start
+    count = Int64(0)
+    temp_total = Int64(0)
+    dense_total = Int64(0)
+    dense_sq_total = Int64(0)
+    invalid = Int64(0)
+    row_start = start
     while row_start > 0 and ptr[row_start - 1] != UInt8(10):
         row_start -= 1
-    var i = start
+    i = start
 
     while i + width <= end:
-        var chunk = ptr.load[width=width](i)
-        var mask = chunk.eq(nl_vec)
+        chunk = ptr.load[width=width](i)
+        mask = chunk.eq(nl_vec)
         if mask.reduce_or():
-            var bytes = mask.cast[DType.uint8]() & 1
-            var u64 = bitcast[DType.uint64, 2](bytes)
-            var res0 = (u64[0] * 0x0102040810204080) >> 56
-            var res1 = (u64[1] * 0x0102040810204080) >> 56
-            var final_mask = Int(res0) | (Int(res1) << 8)
+            bytes = mask.cast[DType.uint8]() & 1
+            u64 = bitcast[DType.uint64, 2](bytes)
+            res0 = (u64[0] * 0x0102040810204080) >> 56
+            res1 = (u64[1] * 0x0102040810204080) >> 56
+            final_mask = Int(res0) | (Int(res1) << 8)
             while final_mask != 0:
-                var nl = i + Int(count_trailing_zeros(final_mask))
-                var c_frac = Int(ptr[nl - 1] & 0x0F)
-                var c_units = Int(ptr[nl - 3] & 0x0F)
-                var c4 = Int(ptr[nl - 4])
-                var c5 = Int(ptr[nl - 5])
-                var c4_val = c4 & 0x0F
-                var has_tens = Int(c4_val <= 9)
-                var is_neg = Int(c4 == 45) | Int(c5 == 45)
-                var temp = (
-                    (c4_val * has_tens * 100)
-                    + (c_units * 10)
-                    + c_frac
-                )
+                nl = i + Int(count_trailing_zeros(final_mask))
+                c_frac = Int(ptr[nl - 1] & 0x0F)
+                c_units = Int(ptr[nl - 3] & 0x0F)
+                c4 = Int(ptr[nl - 4])
+                c5 = Int(ptr[nl - 5])
+                c4_val = c4 & 0x0F
+                has_tens = Int(c4_val <= 9)
+                is_neg = Int(c4 == 45) | Int(c5 == 45)
+                temp = (c4_val * has_tens * 100) + (c_units * 10) + c_frac
                 temp *= 1 - is_neg * 2
 
-                var temp_width = 6 - Int(c5 == 59) - 2 * Int(c4 == 59)
-                var semicolon = nl - temp_width
-                var name_length = semicolon - row_start
-                var head = UInt64(ptr[row_start])
+                temp_width = 6 - Int(c5 == 59) - 2 * Int(c4 == 59)
+                semicolon = nl - temp_width
+                name_length = semicolon - row_start
+                head = UInt64(ptr[row_start])
                 head |= UInt64(ptr[row_start + 1]) << 8
                 head |= UInt64(ptr[row_start + 2]) << 16
-                var hash_value = UInt64(name_length)
+                hash_value = UInt64(name_length)
                 hash_value |= (head & 0xFFFFFF) << 8
                 hash_value |= UInt64(ptr[semicolon - 3]) << 32
-                var slot = Int(
-                    (hash_value * PERFECT_MULTIPLIER)
-                    >> UInt64(PERFECT_SHIFT)
+                slot = Int(
+                    (hash_value * PERFECT_MULTIPLIER) >> UInt64(PERFECT_SHIFT)
                 )
-                var dense = Int(slot_to_dense[slot])
+                dense = Int(slot_to_dense[slot])
 
                 temp_total += Int64(temp)
                 count += 1
@@ -372,32 +351,29 @@ def index_stations_simd(
 
     while i < end:
         if ptr[i] == UInt8(10):
-            var c_frac = Int(ptr[i - 1] & 0x0F)
-            var c_units = Int(ptr[i - 3] & 0x0F)
-            var c4 = Int(ptr[i - 4])
-            var c5 = Int(ptr[i - 5])
-            var c4_val = c4 & 0x0F
-            var has_tens = Int(c4_val <= 9)
-            var is_neg = Int(c4 == 45) | Int(c5 == 45)
-            var temp = (
-                (c4_val * has_tens * 100) + (c_units * 10) + c_frac
-            )
+            c_frac = Int(ptr[i - 1] & 0x0F)
+            c_units = Int(ptr[i - 3] & 0x0F)
+            c4 = Int(ptr[i - 4])
+            c5 = Int(ptr[i - 5])
+            c4_val = c4 & 0x0F
+            has_tens = Int(c4_val <= 9)
+            is_neg = Int(c4 == 45) | Int(c5 == 45)
+            temp = (c4_val * has_tens * 100) + (c_units * 10) + c_frac
             temp *= 1 - is_neg * 2
 
-            var temp_width = 6 - Int(c5 == 59) - 2 * Int(c4 == 59)
-            var semicolon = i - temp_width
-            var name_length = semicolon - row_start
-            var head = UInt64(ptr[row_start])
+            temp_width = 6 - Int(c5 == 59) - 2 * Int(c4 == 59)
+            semicolon = i - temp_width
+            name_length = semicolon - row_start
+            head = UInt64(ptr[row_start])
             head |= UInt64(ptr[row_start + 1]) << 8
             head |= UInt64(ptr[row_start + 2]) << 16
-            var hash_value = UInt64(name_length)
+            hash_value = UInt64(name_length)
             hash_value |= (head & 0xFFFFFF) << 8
             hash_value |= UInt64(ptr[semicolon - 3]) << 32
-            var slot = Int(
-                (hash_value * PERFECT_MULTIPLIER)
-                >> UInt64(PERFECT_SHIFT)
+            slot = Int(
+                (hash_value * PERFECT_MULTIPLIER) >> UInt64(PERFECT_SHIFT)
             )
-            var dense = Int(slot_to_dense[slot])
+            dense = Int(slot_to_dense[slot])
 
             temp_total += Int64(temp)
             count += 1
@@ -419,20 +395,21 @@ def run_cpu_scan(
     num_threads: Int,
 ) raises -> Int:
     """Run the SIMD scanner over equal byte ranges on the CPU."""
+
     @parameter
     def process_chunk(tid: Int):
-        var start = (size * tid) // num_threads
-        var end = (size * (tid + 1)) // num_threads
+        start = (size * tid) // num_threads
+        end = (size * (tid + 1)) // num_threads
         counts_ptr[tid] = count_newlines_simd(ptr + start, end - start)
 
     def process_chunk_unified(tid: Int):
         process_chunk(tid)
 
-    var cpu_ctx = DeviceContext(api="cpu")
+    cpu_ctx = DeviceContext(api="cpu")
     cpu_ctx.enqueue_cpu_range(process_chunk_unified, count=num_threads)
     cpu_ctx.synchronize()
 
-    var total = 0
+    total = 0
     for tid in range(num_threads):
         total += counts_ptr[tid]
     return total
@@ -446,23 +423,24 @@ def run_cpu_temperature_parse(
     num_threads: Int,
 ) raises -> Tuple[Int, Int64]:
     """Parse temperatures over equal byte ranges on the CPU."""
+
     @parameter
     def process_chunk(tid: Int):
-        var start = (size * tid) // num_threads
-        var end = (size * (tid + 1)) // num_threads
-        var result = parse_temperatures_simd(ptr + start, end - start)
+        start = (size * tid) // num_threads
+        end = (size * (tid + 1)) // num_threads
+        result = parse_temperatures_simd(ptr + start, end - start)
         counts_ptr[tid] = result[0]
         sums_ptr[tid] = result[1]
 
     def process_chunk_unified(tid: Int):
         process_chunk(tid)
 
-    var cpu_ctx = DeviceContext(api="cpu")
+    cpu_ctx = DeviceContext(api="cpu")
     cpu_ctx.enqueue_cpu_range(process_chunk_unified, count=num_threads)
     cpu_ctx.synchronize()
 
-    var total_count = 0
-    var total_sum = Int64(0)
+    total_count = 0
+    total_sum = Int64(0)
     for tid in range(num_threads):
         total_count += counts_ptr[tid]
         total_sum += sums_ptr[tid]
@@ -481,13 +459,12 @@ def run_cpu_station_index(
     num_threads: Int,
 ) raises -> Tuple[Int64, Int64, Int64, Int64, Int64]:
     """Index stations over equal byte ranges on the CPU."""
+
     @parameter
     def process_chunk(tid: Int):
-        var start = (size * tid) // num_threads
-        var end = (size * (tid + 1)) // num_threads
-        var result = index_stations_simd(
-            ptr, slot_to_dense, start, end
-        )
+        start = (size * tid) // num_threads
+        end = (size * (tid + 1)) // num_threads
+        result = index_stations_simd(ptr, slot_to_dense, start, end)
         counts_ptr[tid] = result[0]
         temp_sums_ptr[tid] = result[1]
         dense_sums_ptr[tid] = result[2]
@@ -497,15 +474,15 @@ def run_cpu_station_index(
     def process_chunk_unified(tid: Int):
         process_chunk(tid)
 
-    var cpu_ctx = DeviceContext(api="cpu")
+    cpu_ctx = DeviceContext(api="cpu")
     cpu_ctx.enqueue_cpu_range(process_chunk_unified, count=num_threads)
     cpu_ctx.synchronize()
 
-    var total_count = Int64(0)
-    var total_temp_sum = Int64(0)
-    var total_dense_sum = Int64(0)
-    var total_dense_sq_sum = Int64(0)
-    var total_invalid = Int64(0)
+    total_count = Int64(0)
+    total_temp_sum = Int64(0)
+    total_dense_sum = Int64(0)
+    total_dense_sq_sum = Int64(0)
+    total_invalid = Int64(0)
     for tid in range(num_threads):
         total_count += counts_ptr[tid]
         total_temp_sum += temp_sums_ptr[tid]
@@ -526,12 +503,12 @@ def main() raises:
         print("ERROR: no compatible GPU found")
         return
 
-    var filename = "measurements_100m.txt"
+    filename = "measurements_100m.txt"
     if len(argv()) > 1:
         filename = argv()[1]
 
-    var mapped = MappedFile(filename)
-    var size = mapped.size
+    mapped = MappedFile(filename)
+    size = mapped.size
     if size <= 0 or size > MAX_FILE_BYTES:
         print(
             "ERROR: input size must be between 1 and ",
@@ -542,47 +519,44 @@ def main() raises:
         mapped.close()
         return
 
-    var num_cpu_threads = num_logical_cores()
-    var cpu_counts = alloc[Int](num_cpu_threads)
-    var cpu_sums = alloc[Int64](num_cpu_threads)
-    var cpu_index_counts = alloc[Int64](num_cpu_threads)
-    var cpu_index_temp_sums = alloc[Int64](num_cpu_threads)
-    var cpu_dense_sums = alloc[Int64](num_cpu_threads)
-    var cpu_dense_sq_sums = alloc[Int64](num_cpu_threads)
-    var cpu_invalid_counts = alloc[Int64](num_cpu_threads)
-    var slot_to_dense = alloc[Int16](PERFECT_CAPACITY)
-    var station_suffix_slots = alloc[Int](len(STATION_HASHES))
-    var suffix_occupancy = alloc[UInt64](SUFFIX_WORDS)
-    var suffix_prefix = alloc[Int16](SUFFIX_WORDS)
+    num_cpu_threads = num_logical_cores()
+    cpu_counts = alloc[Int](num_cpu_threads)
+    cpu_sums = alloc[Int64](num_cpu_threads)
+    cpu_index_counts = alloc[Int64](num_cpu_threads)
+    cpu_index_temp_sums = alloc[Int64](num_cpu_threads)
+    cpu_dense_sums = alloc[Int64](num_cpu_threads)
+    cpu_dense_sq_sums = alloc[Int64](num_cpu_threads)
+    cpu_invalid_counts = alloc[Int64](num_cpu_threads)
+    slot_to_dense = alloc[Int16](PERFECT_CAPACITY)
+    station_suffix_slots = alloc[Int](len(STATION_HASHES))
+    suffix_occupancy = alloc[UInt64](SUFFIX_WORDS)
+    suffix_prefix = alloc[Int16](SUFFIX_WORDS)
     for slot in range(PERFECT_CAPACITY):
         slot_to_dense[slot] = -1
     for word_index in range(SUFFIX_WORDS):
         suffix_occupancy[word_index] = 0
 
     comptime for station_id in range(len(STATION_HASHES)):
+        # Keep these block-scoped: station_bytes borrows station_name, and a
+        # function-scoped implicit binding would be reassigned next iteration.
         var station_name = String(STATION_NAMES[station_id])
         var station_bytes = station_name.as_bytes()
-        var station_length = len(station_bytes)
-        var suffix_length = min(station_length, 8)
-        var suffix_key = UInt64(0)
+        station_length = len(station_bytes)
+        suffix_length = min(station_length, 8)
+        suffix_key = UInt64(0)
         for suffix_index in range(suffix_length):
-            suffix_key |= (
-                UInt64(
-                    station_bytes[
-                        station_length - suffix_length + suffix_index
-                    ]
-                )
-                << UInt64(suffix_index * 8)
-            )
-        var suffix_slot = Int(
+            suffix_key |= UInt64(
+                station_bytes[station_length - suffix_length + suffix_index]
+            ) << UInt64(suffix_index * 8)
+        suffix_slot = Int(
             (suffix_key * SUFFIX_MULTIPLIER) >> UInt64(SUFFIX_SHIFT)
         )
         station_suffix_slots[station_id] = suffix_slot
-        suffix_occupancy[suffix_slot >> 6] |= (
-            UInt64(1) << UInt64(suffix_slot & 63)
+        suffix_occupancy[suffix_slot >> 6] |= UInt64(1) << UInt64(
+            suffix_slot & 63
         )
 
-    var occupied_before = 0
+    occupied_before = 0
     for word_index in range(SUFFIX_WORDS):
         suffix_prefix[word_index] = Int16(occupied_before)
         occupied_before += Int(pop_count(suffix_occupancy[word_index]))
@@ -603,20 +577,18 @@ def main() raises:
         comptime station_slot = Int(
             (station_hash * PERFECT_MULTIPLIER) >> UInt64(PERFECT_SHIFT)
         )
-        var suffix_slot = station_suffix_slots[station_id]
-        var word_index = suffix_slot >> 6
-        var bit_index = suffix_slot & 63
-        var lower_bits = suffix_occupancy[word_index] & (
+        suffix_slot = station_suffix_slots[station_id]
+        word_index = suffix_slot >> 6
+        bit_index = suffix_slot & 63
+        lower_bits = suffix_occupancy[word_index] & (
             (UInt64(1) << UInt64(bit_index)) - UInt64(1)
         )
-        var dense = (
-            Int(suffix_prefix[word_index]) + Int(pop_count(lower_bits))
-        )
+        dense = Int(suffix_prefix[word_index]) + Int(pop_count(lower_bits))
         if station_id == PALM_SPRINGS_ID:
             dense = LAST_DENSE_ID
         slot_to_dense[station_slot] = Int16(dense)
 
-    var ctx = DeviceContext(api="metal")
+    ctx = DeviceContext(api="metal")
     print("GPU device:", ctx.name())
     print("Input bytes:", size)
     print("CPU threads:", num_cpu_threads)
@@ -624,56 +596,46 @@ def main() raises:
 
     # The current high-level path copies the mmap into a Metal DeviceBuffer.
     # Time it explicitly so kernel-only results cannot hide staging overhead.
-    var stage_start = perf_counter_ns()
-    var data_buffer = ctx.enqueue_create_buffer[DType.uint8](size)
+    stage_start = perf_counter_ns()
+    data_buffer = ctx.enqueue_create_buffer[DType.uint8](size)
     ctx.enqueue_copy(data_buffer, mapped.ptr)
     ctx.synchronize()
-    var stage_end = perf_counter_ns()
+    stage_end = perf_counter_ns()
 
-    var counts_buffer = ctx.enqueue_create_buffer[DType.int64](
+    counts_buffer = ctx.enqueue_create_buffer[DType.int64](NUM_GPU_THREADS)
+    sums_buffer = ctx.enqueue_create_buffer[DType.int64](NUM_GPU_THREADS)
+    dense_sums_buffer = ctx.enqueue_create_buffer[DType.int64](NUM_GPU_THREADS)
+    dense_sq_sums_buffer = ctx.enqueue_create_buffer[DType.int64](
         NUM_GPU_THREADS
     )
-    var sums_buffer = ctx.enqueue_create_buffer[DType.int64](NUM_GPU_THREADS)
-    var dense_sums_buffer = ctx.enqueue_create_buffer[DType.int64](
+    invalid_counts_buffer = ctx.enqueue_create_buffer[DType.int64](
         NUM_GPU_THREADS
     )
-    var dense_sq_sums_buffer = ctx.enqueue_create_buffer[DType.int64](
-        NUM_GPU_THREADS
-    )
-    var invalid_counts_buffer = ctx.enqueue_create_buffer[DType.int64](
-        NUM_GPU_THREADS
-    )
-    var suffix_occupancy_buffer = ctx.enqueue_create_buffer[DType.uint64](
+    suffix_occupancy_buffer = ctx.enqueue_create_buffer[DType.uint64](
         SUFFIX_WORDS
     )
-    var suffix_prefix_buffer = ctx.enqueue_create_buffer[DType.int16](
-        SUFFIX_WORDS
-    )
+    suffix_prefix_buffer = ctx.enqueue_create_buffer[DType.int16](SUFFIX_WORDS)
     ctx.enqueue_copy(suffix_occupancy_buffer, suffix_occupancy)
     ctx.enqueue_copy(suffix_prefix_buffer, suffix_prefix)
-    var host_counts = ctx.enqueue_create_host_buffer[DType.int64](
+    host_counts = ctx.enqueue_create_host_buffer[DType.int64](NUM_GPU_THREADS)
+    host_sums = ctx.enqueue_create_host_buffer[DType.int64](NUM_GPU_THREADS)
+    host_dense_sums = ctx.enqueue_create_host_buffer[DType.int64](
         NUM_GPU_THREADS
     )
-    var host_sums = ctx.enqueue_create_host_buffer[DType.int64](
+    host_dense_sq_sums = ctx.enqueue_create_host_buffer[DType.int64](
         NUM_GPU_THREADS
     )
-    var host_dense_sums = ctx.enqueue_create_host_buffer[DType.int64](
-        NUM_GPU_THREADS
-    )
-    var host_dense_sq_sums = ctx.enqueue_create_host_buffer[DType.int64](
-        NUM_GPU_THREADS
-    )
-    var host_invalid_counts = ctx.enqueue_create_host_buffer[DType.int64](
+    host_invalid_counts = ctx.enqueue_create_host_buffer[DType.int64](
         NUM_GPU_THREADS
     )
     ctx.synchronize()
 
-    var scan_kernel = ctx.compile_function[gpu_count_newlines]()
-    var temperature_kernel = ctx.compile_function[gpu_parse_temperatures]()
-    var station_index_kernel = ctx.compile_function[gpu_index_stations]()
+    scan_kernel = ctx.compile_function[gpu_count_newlines]()
+    temperature_kernel = ctx.compile_function[gpu_parse_temperatures]()
+    station_index_kernel = ctx.compile_function[gpu_index_stations]()
 
     # Warm both paths before correctness and timing.
-    var cpu_expected = run_cpu_scan(
+    cpu_expected = run_cpu_scan(
         mapped.ptr,
         size,
         cpu_counts,
@@ -690,7 +652,7 @@ def main() raises:
     ctx.enqueue_copy(dst_buf=host_counts, src_buf=counts_buffer)
     ctx.synchronize()
 
-    var gpu_actual = Int64(0)
+    gpu_actual = Int64(0)
     for tid in range(NUM_GPU_THREADS):
         gpu_actual += host_counts[tid]
 
@@ -714,16 +676,16 @@ def main() raises:
     # machine remains in normal use. GPU timings include enqueue+synchronize,
     # but not input staging or result readback.
     for pair in range(BENCH_PAIRS):
-        var cpu_a_start = perf_counter_ns()
-        var cpu_a_count = run_cpu_scan(
+        cpu_a_start = perf_counter_ns()
+        cpu_a_count = run_cpu_scan(
             mapped.ptr,
             size,
             cpu_counts,
             num_cpu_threads,
         )
-        var cpu_a_end = perf_counter_ns()
+        cpu_a_end = perf_counter_ns()
 
-        var gpu_b1_start = perf_counter_ns()
+        gpu_b1_start = perf_counter_ns()
         ctx.enqueue_function(
             scan_kernel,
             data_buffer,
@@ -733,9 +695,9 @@ def main() raises:
             block_dim=BLOCK_SIZE,
         )
         ctx.synchronize()
-        var gpu_b1_end = perf_counter_ns()
+        gpu_b1_end = perf_counter_ns()
 
-        var gpu_b2_start = perf_counter_ns()
+        gpu_b2_start = perf_counter_ns()
         ctx.enqueue_function(
             scan_kernel,
             data_buffer,
@@ -745,16 +707,16 @@ def main() raises:
             block_dim=BLOCK_SIZE,
         )
         ctx.synchronize()
-        var gpu_b2_end = perf_counter_ns()
+        gpu_b2_end = perf_counter_ns()
 
-        var cpu_a2_start = perf_counter_ns()
-        var cpu_a2_count = run_cpu_scan(
+        cpu_a2_start = perf_counter_ns()
+        cpu_a2_count = run_cpu_scan(
             mapped.ptr,
             size,
             cpu_counts,
             num_cpu_threads,
         )
-        var cpu_a2_end = perf_counter_ns()
+        cpu_a2_end = perf_counter_ns()
 
         if cpu_a_count != cpu_expected or cpu_a2_count != cpu_expected:
             print("ERROR: CPU benchmark count changed")
@@ -801,7 +763,7 @@ def main() raises:
 
     # Stage two: parse temperatures at newline positions without station
     # hashing or aggregation. Validate both row count and total temperature sum.
-    var cpu_temp_expected = run_cpu_temperature_parse(
+    cpu_temp_expected = run_cpu_temperature_parse(
         mapped.ptr,
         size,
         cpu_counts,
@@ -821,8 +783,8 @@ def main() raises:
     ctx.enqueue_copy(dst_buf=host_sums, src_buf=sums_buffer)
     ctx.synchronize()
 
-    var gpu_temp_count = Int64(0)
-    var gpu_temp_sum = Int64(0)
+    gpu_temp_count = Int64(0)
+    gpu_temp_sum = Int64(0)
     for tid in range(NUM_GPU_THREADS):
         gpu_temp_count += host_counts[tid]
         gpu_temp_sum += host_sums[tid]
@@ -853,17 +815,17 @@ def main() raises:
     )
 
     for pair in range(BENCH_PAIRS):
-        var cpu_a_start = perf_counter_ns()
-        var cpu_a_result = run_cpu_temperature_parse(
+        cpu_a_start = perf_counter_ns()
+        cpu_a_result = run_cpu_temperature_parse(
             mapped.ptr,
             size,
             cpu_counts,
             cpu_sums,
             num_cpu_threads,
         )
-        var cpu_a_end = perf_counter_ns()
+        cpu_a_end = perf_counter_ns()
 
-        var gpu_b1_start = perf_counter_ns()
+        gpu_b1_start = perf_counter_ns()
         ctx.enqueue_function(
             temperature_kernel,
             data_buffer,
@@ -874,9 +836,9 @@ def main() raises:
             block_dim=BLOCK_SIZE,
         )
         ctx.synchronize()
-        var gpu_b1_end = perf_counter_ns()
+        gpu_b1_end = perf_counter_ns()
 
-        var gpu_b2_start = perf_counter_ns()
+        gpu_b2_start = perf_counter_ns()
         ctx.enqueue_function(
             temperature_kernel,
             data_buffer,
@@ -887,17 +849,17 @@ def main() raises:
             block_dim=BLOCK_SIZE,
         )
         ctx.synchronize()
-        var gpu_b2_end = perf_counter_ns()
+        gpu_b2_end = perf_counter_ns()
 
-        var cpu_a2_start = perf_counter_ns()
-        var cpu_a2_result = run_cpu_temperature_parse(
+        cpu_a2_start = perf_counter_ns()
+        cpu_a2_result = run_cpu_temperature_parse(
             mapped.ptr,
             size,
             cpu_counts,
             cpu_sums,
             num_cpu_threads,
         )
-        var cpu_a2_end = perf_counter_ns()
+        cpu_a2_end = perf_counter_ns()
 
         if (
             cpu_a_result != cpu_temp_expected
@@ -952,7 +914,7 @@ def main() raises:
 
     # Stage three: recover each row's station-name boundary with backward SIMD
     # masks and map the name to a dense 0..412 ID.
-    var cpu_index_expected = run_cpu_station_index(
+    cpu_index_expected = run_cpu_station_index(
         mapped.ptr,
         slot_to_dense,
         size,
@@ -980,26 +942,22 @@ def main() raises:
     ctx.enqueue_copy(dst_buf=host_counts, src_buf=counts_buffer)
     ctx.enqueue_copy(dst_buf=host_sums, src_buf=sums_buffer)
     ctx.enqueue_copy(dst_buf=host_dense_sums, src_buf=dense_sums_buffer)
-    ctx.enqueue_copy(
-        dst_buf=host_dense_sq_sums, src_buf=dense_sq_sums_buffer
-    )
-    ctx.enqueue_copy(
-        dst_buf=host_invalid_counts, src_buf=invalid_counts_buffer
-    )
+    ctx.enqueue_copy(dst_buf=host_dense_sq_sums, src_buf=dense_sq_sums_buffer)
+    ctx.enqueue_copy(dst_buf=host_invalid_counts, src_buf=invalid_counts_buffer)
     ctx.synchronize()
 
-    var gpu_index_count = Int64(0)
-    var gpu_index_temp_sum = Int64(0)
-    var gpu_dense_sum = Int64(0)
-    var gpu_dense_sq_sum = Int64(0)
-    var gpu_invalid_count = Int64(0)
+    gpu_index_count = Int64(0)
+    gpu_index_temp_sum = Int64(0)
+    gpu_dense_sum = Int64(0)
+    gpu_dense_sq_sum = Int64(0)
+    gpu_invalid_count = Int64(0)
     for tid in range(NUM_GPU_THREADS):
         gpu_index_count += host_counts[tid]
         gpu_index_temp_sum += host_sums[tid]
         gpu_dense_sum += host_dense_sums[tid]
         gpu_dense_sq_sum += host_dense_sq_sums[tid]
         gpu_invalid_count += host_invalid_counts[tid]
-    var gpu_index_actual = (
+    gpu_index_actual = (
         gpu_index_count,
         gpu_index_temp_sum,
         gpu_dense_sum,
@@ -1038,8 +996,8 @@ def main() raises:
     )
 
     for pair in range(BENCH_PAIRS):
-        var cpu_a_start = perf_counter_ns()
-        var cpu_a_result = run_cpu_station_index(
+        cpu_a_start = perf_counter_ns()
+        cpu_index_a_result = run_cpu_station_index(
             mapped.ptr,
             slot_to_dense,
             size,
@@ -1050,9 +1008,9 @@ def main() raises:
             cpu_invalid_counts,
             num_cpu_threads,
         )
-        var cpu_a_end = perf_counter_ns()
+        cpu_a_end = perf_counter_ns()
 
-        var gpu_b1_start = perf_counter_ns()
+        gpu_b1_start = perf_counter_ns()
         ctx.enqueue_function(
             station_index_kernel,
             data_buffer,
@@ -1068,9 +1026,9 @@ def main() raises:
             block_dim=BLOCK_SIZE,
         )
         ctx.synchronize()
-        var gpu_b1_end = perf_counter_ns()
+        gpu_b1_end = perf_counter_ns()
 
-        var gpu_b2_start = perf_counter_ns()
+        gpu_b2_start = perf_counter_ns()
         ctx.enqueue_function(
             station_index_kernel,
             data_buffer,
@@ -1086,10 +1044,10 @@ def main() raises:
             block_dim=BLOCK_SIZE,
         )
         ctx.synchronize()
-        var gpu_b2_end = perf_counter_ns()
+        gpu_b2_end = perf_counter_ns()
 
-        var cpu_a2_start = perf_counter_ns()
-        var cpu_a2_result = run_cpu_station_index(
+        cpu_a2_start = perf_counter_ns()
+        cpu_index_a2_result = run_cpu_station_index(
             mapped.ptr,
             slot_to_dense,
             size,
@@ -1100,11 +1058,11 @@ def main() raises:
             cpu_invalid_counts,
             num_cpu_threads,
         )
-        var cpu_a2_end = perf_counter_ns()
+        cpu_a2_end = perf_counter_ns()
 
         if (
-            cpu_a_result != cpu_index_expected
-            or cpu_a2_result != cpu_index_expected
+            cpu_index_a_result != cpu_index_expected
+            or cpu_index_a2_result != cpu_index_expected
         ):
             print("ERROR: CPU station benchmark result changed")
             mapped.close()
@@ -1138,12 +1096,8 @@ def main() raises:
     ctx.enqueue_copy(dst_buf=host_counts, src_buf=counts_buffer)
     ctx.enqueue_copy(dst_buf=host_sums, src_buf=sums_buffer)
     ctx.enqueue_copy(dst_buf=host_dense_sums, src_buf=dense_sums_buffer)
-    ctx.enqueue_copy(
-        dst_buf=host_dense_sq_sums, src_buf=dense_sq_sums_buffer
-    )
-    ctx.enqueue_copy(
-        dst_buf=host_invalid_counts, src_buf=invalid_counts_buffer
-    )
+    ctx.enqueue_copy(dst_buf=host_dense_sq_sums, src_buf=dense_sq_sums_buffer)
+    ctx.enqueue_copy(dst_buf=host_invalid_counts, src_buf=invalid_counts_buffer)
     ctx.synchronize()
     gpu_index_count = 0
     gpu_index_temp_sum = 0

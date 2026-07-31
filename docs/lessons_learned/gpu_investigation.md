@@ -1,8 +1,9 @@
 # 1BRC Mojo — GPU Investigation
 
 The Apple M3 GPU can scan resident 1BRC bytes materially faster than the
-parallel CPU SIMD scanner. It is not yet faster end to end because the available
-high-level Mojo path copies the input into a Metal buffer.
+parallel CPU SIMD scanner. An Objective-C++ bridge can wrap Mojo's file mapping
+in a Metal buffer without copying, but the first GPU access to the file-backed
+VM region remains expensive and variable.
 
 ## Current Result
 
@@ -22,24 +23,29 @@ Both paths counted exactly 99,999,387 newlines before and after timing. The GPU
 kernel sustained 58.25–60.99 GB/s while the eight-thread CPU scanner sustained
 22.12–22.47 GB/s. The scan-only gate therefore passes.
 
-## Input Constraint
+## Zero-copy input
 
-The benchmark copies the mmap directly into a Mojo `DeviceBuffer` and times
+The high-level Mojo benchmark copies the mmap into a `DeviceBuffer` and times
 that operation independently:
 
 - 2,077.689 ms immediately after materializing the dataset, including cold file
   faults;
 - 245.106 ms with warm file data.
 
-Even the warm copy plus the median kernel is about 268.8 ms. The current CPU
-implementation parses and aggregates the same 100M input faster than that, so
-kernel throughput cannot justify production GPU execution while the full-file
-copy remains.
+The direct-Metal proof in `src/gpu_zero_copy.mojo` instead passes the mmap
+pointer to an Objective-C++ bridge. Metal's `newBufferWithBytesNoCopy` wrapped
+the page-aligned 1.38 GB VM region in 0.057–0.085 ms. All dispatches returned
+the exact 99,999,387 newline count.
 
-Evaluate a Metal shared buffer wrapping aligned mapped memory or direct reads
-into a GPU-visible shared allocation before making an end-to-end claim.
-Apple's unified physical memory does not make an ordinary mmap GPU-visible
-through the current high-level API automatically.
+Repeated bridge calls measured 21.373–28.492 ms, with a 22.729 ms median across
+20 samples. A new buffer's first full dispatch remained variable: 186–723 ms
+when the GPU touched it first and 70.954 ms after a CPU pre-touch. The primitive
+therefore removes the explicit copy, not VM residency and first-access costs.
+
+The bridge uses an MSL kernel. Mojo's public `DeviceBuffer` API cannot adopt the
+external `MTLBuffer`, so Mojo-compiled kernels still use the copied path. Full
+evidence is under
+`results/benchmarks/20260731-metal-zero-copy/measurements_100m.md`.
 
 ## Temperature Parsing Result
 
@@ -57,6 +63,31 @@ temperature kernel therefore passes, but only about 20 ms separates it from
 the equivalent CPU reference. Station-name handling and aggregation must fit
 inside that remaining isolated headroom to preserve a kernel advantage.
 
+The direct-Metal MSL version uses the no-copy mmap and measured a 45.356 ms
+median across 15 repeated warm calls, with a 39.716–57.346 ms range. Against
+the established 79.495–79.570 ms parallel CPU reference, equivalent warm
+temperature-only work is approximately 1.75x faster. It also improves on the
+copied Mojo GPU kernel's 59.211 ms warm median by about 23%.
+
+First dispatch remains unsuitable for one-shot execution. GPU-first temperature
+dispatches took 201–747 ms, and CPU pre-touch reduced the dispatch to 91 ms.
+Context and runtime MSL compilation added another 49–55 ms. Full evidence is
+under `results/benchmarks/20260731-metal-zero-copy/measurements_100m_temperature.md`.
+
+## Direct-Metal station indexing
+
+The retained compact-rank index was ported to MSL over the same no-copy input.
+Two packed 4-byte loads reconstruct each eight-byte suffix; one unaligned
+64-bit MSL load was incorrect, while eight scalar byte loads measured 344.242
+ms median.
+
+The packed form passed exact row, temperature, dense-ID, squared-ID, and invalid
+counts. Two warm series measured 149.184 ms and 145.418 ms medians, for a
+146.835 ms combined median across ten samples. The parallel CPU references span
+135.773–145.157 ms, so direct Metal remains 1–8% slower and fails the material
+win gate. Full evidence is under
+`results/benchmarks/20260731-metal-zero-copy/measurements_100m_station.md`.
+
 ## Why the CPU-Shaped Parser Failed
 
 The earlier full parser used only 256 total GPU threads with one-thread blocks.
@@ -70,14 +101,15 @@ Its 4,686 ms kernel and roughly 17,939 ms total time on 300M demonstrate that
 CPU chunking, scalar scanning, and per-thread sparse aggregation map poorly to
 the GPU. They do not contradict the occupied scan result.
 
-## Remaining Gates
+## Current decision
 
-1. **Passed:** parse fixed-point temperatures without aggregation.
-2. Map station names to the dense `0..412` universe.
-3. Aggregate into one 413-entry table per workgroup and flush partial tables.
-4. Remove or pipeline input preparation.
-5. Compare exact GPU-only and throughput-weighted CPU+GPU execution end to end.
+1. **Passed:** occupied newline scan and no-copy mmap wrapping for MSL kernels.
+2. **Passed:** direct-Metal fixed-point temperature parsing at 1.75x the warm
+   parallel CPU temperature reference.
+3. **Failed:** direct-Metal compact-rank station indexing measured 146.835 ms
+   warm median and did not beat the 135.773–145.157 ms CPU references.
+4. **Stopped:** do not add aggregation; station indexing consumed the warm
+   temperature lead before aggregation began.
 
-Stop if parsing destroys the scan advantage, shared-table contention collapses
-throughput, input preparation remains dominant, or concurrent CPU+GPU
-throughput fails to exceed CPU-only execution.
+Promote no GPU or hybrid path until exact one-shot end-to-end wall time beats
+the CPU implementation under normal workstation use.

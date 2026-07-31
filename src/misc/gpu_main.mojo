@@ -18,7 +18,7 @@ Design notes:
   - MAX_FILE_BYTES sets the compile-time LayoutTensor size; actual device buffer
     is allocated to 'size' bytes. Kernel always bounds-checks via chunk_end.
   - Name resolution on CPU uses the original mmap ptr + name_offset stored in the
-    result -- avoids the MutAnyOrigin/MutExternalOrigin mismatch.
+    result -- avoids an unsafe-origin mismatch.
 
 Known limitations (deliberate -- first investigation baseline):
   - block_dim=1 underutilises GPU; gives per-thread throughput baseline
@@ -39,17 +39,17 @@ from IO.mmap import MappedFile, MADV_WILLNEED
 
 # Compile-time constants
 comptime MAX_FILE_BYTES: Int = 4_200_000_000  # 4.1 GB; increase for larger files
-comptime N_CHUNKS: Int = 256                  # GPU worker threads
-comptime GPU_CAPACITY: Int = 16384            # hash table capacity (matches CPU)
+comptime N_CHUNKS: Int = 256  # GPU worker threads
+comptime GPU_CAPACITY: Int = 16384  # hash table capacity (matches CPU)
 comptime GPU_MULTIPLIER = UInt64(11164934581231786391)
 comptime GPU_SHIFT = UInt64(50)
-comptime ENTRY_WORDS: Int = 6                 # Int64 words per hash entry
+comptime ENTRY_WORDS: Int = 6  # Int64 words per hash entry
 comptime RESULT_SIZE: Int = N_CHUNKS * GPU_CAPACITY * ENTRY_WORDS
 
 # Result entry layout (each field is one Int64 word):
 #   [0]=min  [1]=max  [2]=sum  [3]=count  [4]=name_offset  [5]=name_len
 
-comptime data_layout   = Layout.row_major(MAX_FILE_BYTES)
+comptime data_layout = Layout.row_major(MAX_FILE_BYTES)
 comptime chunks_layout = Layout.row_major(N_CHUNKS + 1)
 comptime result_layout = Layout.row_major(RESULT_SIZE)
 
@@ -60,18 +60,18 @@ def gpu_parse_kernel(
     result: LayoutTensor[DType.int64, result_layout, MutAnyOrigin],
 ):
     """One GPU thread per file chunk. Parses rows sequentially, no atomics."""
-    var tid = Int(global_idx.x)
-    var chunk_start = Int(rebind[Scalar[DType.int64]](chunk_starts[tid]))
-    var chunk_end   = Int(rebind[Scalar[DType.int64]](chunk_starts[tid + 1]))
+    tid = Int(global_idx.x)
+    chunk_start = Int(rebind[Scalar[DType.int64]](chunk_starts[tid]))
+    chunk_end = Int(rebind[Scalar[DType.int64]](chunk_starts[tid + 1]))
 
-    var res_base = tid * GPU_CAPACITY * ENTRY_WORDS
+    res_base = tid * GPU_CAPACITY * ENTRY_WORDS
 
     # Zero-initialise this thread's result section.
     for j in range(GPU_CAPACITY * ENTRY_WORDS):
         result[res_base + j] = rebind[result.element_type](Int64(0))
 
-    var row_start = chunk_start
-    var i = chunk_start
+    row_start = chunk_start
+    i = chunk_start
 
     while i < chunk_end:
         # Find end-of-row (byte-by-byte; no SIMD in this baseline kernel).
@@ -81,7 +81,7 @@ def gpu_parse_kernel(
             i += 1
         if i >= chunk_end:
             break
-        var nl = i
+        nl = i
         i += 1
 
         # Shortest valid row is "X;9.9\n" (7 bytes).
@@ -92,45 +92,55 @@ def gpu_parse_kernel(
         # Build a little-endian UInt64 from 8 bytes ending at nl:
         #   byte at (nl-8+k) occupies bits [k*8 .. k*8+7]
         # So (chunk8 >> 56) & 0xFF == byte at nl-1, matching parse_row on CPU.
-        var chunk8 = UInt64(0)
+        chunk8 = UInt64(0)
         comptime for k in range(8):
-            chunk8 |= (
-                UInt64(rebind[Scalar[DType.uint8]](data[nl - 8 + k]))
-                << UInt64(k * 8)
-            )
+            chunk8 |= UInt64(
+                rebind[Scalar[DType.uint8]](data[nl - 8 + k])
+            ) << UInt64(k * 8)
 
-        var c_frac  = Int((chunk8 >> 56) & 0xFF) - 48
-        var c_units = Int((chunk8 >> 40) & 0xFF) - 48
-        var c4      = Int((chunk8 >> 32) & 0xFF)
-        var c5      = Int((chunk8 >> 24) & 0xFF)
+        c_frac = Int((chunk8 >> 56) & 0xFF) - 48
+        c_units = Int((chunk8 >> 40) & 0xFF) - 48
+        c4 = Int((chunk8 >> 32) & 0xFF)
+        c5 = Int((chunk8 >> 24) & 0xFF)
 
-        var c5_is_semi = Int(c5 == 59)
-        var c4_is_semi = Int(c4 == 59)
-        var offset   = 6 - c5_is_semi - (c4_is_semi * 2)
-        var name_len = nl - offset - row_start
+        c5_is_semi = Int(c5 == 59)
+        c4_is_semi = Int(c4 == 59)
+        offset = 6 - c5_is_semi - (c4_is_semi * 2)
+        name_len = nl - offset - row_start
 
         if name_len < 2 or name_len > 100:
             row_start = i
             continue
 
-        var c4_val   = c4 & 0x0F
-        var has_tens = Int(c4_val <= 9)
-        var is_neg   = Int(c4 == 45) | Int(c5 == 45)
-        var temp_val = (c4_val * has_tens * 100) + (c_units * 10) + c_frac
-        temp_val *= (1 - is_neg * 2)
+        c4_val = c4 & 0x0F
+        has_tens = Int(c4_val <= 9)
+        is_neg = Int(c4 == 45) | Int(c5 == 45)
+        temp_val = (c4_val * has_tens * 100) + (c_units * 10) + c_frac
+        temp_val *= 1 - is_neg * 2
 
         # Hash key -- identical extraction to PerfectStationMap.update_or_insert.
-        var k = UInt64(name_len)
+        k = UInt64(name_len)
         k |= UInt64(rebind[Scalar[DType.uint8]](data[row_start])) << 8
-        k |= UInt64(rebind[Scalar[DType.uint8]](data[row_start + (name_len >> 1)])) << 16
-        k |= UInt64(rebind[Scalar[DType.uint8]](data[row_start + name_len - 1])) << 24
+        k |= (
+            UInt64(
+                rebind[Scalar[DType.uint8]](data[row_start + (name_len >> 1)])
+            )
+            << 16
+        )
+        k |= (
+            UInt64(rebind[Scalar[DType.uint8]](data[row_start + name_len - 1]))
+            << 24
+        )
         k |= UInt64(rebind[Scalar[DType.uint8]](data[row_start + 1])) << 32
-        k |= UInt64(rebind[Scalar[DType.uint8]](data[row_start + name_len - 2])) << 40
-        var idx = Int((k * GPU_MULTIPLIER) >> GPU_SHIFT)
+        k |= (
+            UInt64(rebind[Scalar[DType.uint8]](data[row_start + name_len - 2]))
+            << 40
+        )
+        idx = Int((k * GPU_MULTIPLIER) >> GPU_SHIFT)
 
         # Update result entry (no atomics -- single thread owns this section).
-        var e     = res_base + idx * ENTRY_WORDS
-        var count = rebind[Scalar[DType.int64]](result[e + 3])
+        e = res_base + idx * ENTRY_WORDS
+        count = rebind[Scalar[DType.int64]](result[e + 3])
 
         if count == Int64(0):
             result[e + 0] = rebind[result.element_type](Int64(temp_val))
@@ -140,14 +150,16 @@ def gpu_parse_kernel(
             result[e + 4] = rebind[result.element_type](Int64(row_start))
             result[e + 5] = rebind[result.element_type](Int64(name_len))
         else:
-            var cur_min = rebind[Scalar[DType.int64]](result[e + 0])
-            var cur_max = rebind[Scalar[DType.int64]](result[e + 1])
-            var cur_sum = rebind[Scalar[DType.int64]](result[e + 2])
+            cur_min = rebind[Scalar[DType.int64]](result[e + 0])
+            cur_max = rebind[Scalar[DType.int64]](result[e + 1])
+            cur_sum = rebind[Scalar[DType.int64]](result[e + 2])
             if Int64(temp_val) < cur_min:
                 result[e + 0] = rebind[result.element_type](Int64(temp_val))
             if Int64(temp_val) > cur_max:
                 result[e + 1] = rebind[result.element_type](Int64(temp_val))
-            result[e + 2] = rebind[result.element_type](cur_sum + Int64(temp_val))
+            result[e + 2] = rebind[result.element_type](
+                cur_sum + Int64(temp_val)
+            )
             result[e + 3] = rebind[result.element_type](count + Int64(1))
 
         row_start = i
@@ -229,7 +241,7 @@ def gpu_parse_kernel(
 #     ctx.synchronize()
 
 #     # Merge: read result buffer, resolve names via original mmap ptr + name_offset.
-#     # Using mapped.ptr (MutExternalOrigin) avoids any unsafe origin casting.
+#     # Using mapped.ptr directly avoids any unsafe origin casting.
 #     var final_map = PerfectStationMap[MAP_TRACKER=EmptyMapMetrics]()
 
 #     with dev_result_buf.map_to_host() as host_result:

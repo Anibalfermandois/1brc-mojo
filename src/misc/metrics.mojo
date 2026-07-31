@@ -2,26 +2,52 @@ from std.memory import UnsafePointer
 
 # ── Map Analysis ──────────────────────────────────────────────
 
-trait MapTracker(
-    Copyable, ImplicitlyCopyable, Movable, ImplicitlyDeletable
-):
+
+trait MapTracker(Copyable, ImplicitlyCopyable, ImplicitlyDeletable, Movable):
     comptime ACTIVE: Bool
-    def __init__(out self): ...
-    def record_lookup(mut self): ...
-    def record_insert(mut self): ...
-    def record_update(mut self): ...
-    def record_probe(mut self): ...
-    def record_max_probe(mut self, run: Int): ...
-    def get_total_lookups(self) -> Int: ...
-    def get_total_inserts(self) -> Int: ...
-    def get_total_updates(self) -> Int: ...
-    def get_total_probes(self) -> Int: ...
-    def get_max_probe_run(self) -> Int: ...
-    def print_summary(self): ...
-    def merge_from(mut self, imm other: Self): ...
+
+    def __init__(out self):
+        ...
+
+    def record_lookup(mut self):
+        ...
+
+    def record_insert(mut self):
+        ...
+
+    def record_update(mut self):
+        ...
+
+    def record_probe(mut self):
+        ...
+
+    def record_max_probe(mut self, run: Int):
+        ...
+
+    def get_total_lookups(self) -> Int:
+        ...
+
+    def get_total_inserts(self) -> Int:
+        ...
+
+    def get_total_updates(self) -> Int:
+        ...
+
+    def get_total_probes(self) -> Int:
+        ...
+
+    def get_max_probe_run(self) -> Int:
+        ...
+
+    def print_summary(self):
+        ...
+
+    def merge_from(mut self, imm other: Self):
+        ...
+
 
 struct MapMetrics(
-    MapTracker, Copyable, ImplicitlyCopyable, Movable, ImplicitlyDeletable
+    Copyable, ImplicitlyCopyable, ImplicitlyDeletable, MapTracker, Movable
 ):
     comptime ACTIVE = True
     var total_lookups: Int
@@ -38,32 +64,62 @@ struct MapMetrics(
         self.max_probe_run = 0
 
     @always_inline
-    def record_lookup(mut self): self.total_lookups += 1
+    def record_lookup(mut self):
+        self.total_lookups += 1
+
     @always_inline
-    def record_insert(mut self): self.total_inserts += 1
+    def record_insert(mut self):
+        self.total_inserts += 1
+
     @always_inline
-    def record_update(mut self): self.total_updates += 1
+    def record_update(mut self):
+        self.total_updates += 1
+
     @always_inline
-    def record_probe(mut self): self.total_probes += 1
+    def record_probe(mut self):
+        self.total_probes += 1
+
     @always_inline
     def record_max_probe(mut self, run: Int):
-        if run > self.max_probe_run: self.max_probe_run = run
+        if run > self.max_probe_run:
+            self.max_probe_run = run
 
-    def get_total_lookups(self) -> Int: return self.total_lookups
-    def get_total_inserts(self) -> Int: return self.total_inserts
-    def get_total_updates(self) -> Int: return self.total_updates
-    def get_total_probes(self) -> Int: return self.total_probes
-    def get_max_probe_run(self) -> Int: return self.max_probe_run
+    def get_total_lookups(self) -> Int:
+        return self.total_lookups
+
+    def get_total_inserts(self) -> Int:
+        return self.total_inserts
+
+    def get_total_updates(self) -> Int:
+        return self.total_updates
+
+    def get_total_probes(self) -> Int:
+        return self.total_probes
+
+    def get_max_probe_run(self) -> Int:
+        return self.max_probe_run
 
     def print_summary(self):
         if self.total_probes > 0:
-            print("\n── Perfect Hashmap Collision Verification ───────────────────────────")
+            print(
+                "\n── Perfect Hashmap Collision Verification"
+                " ───────────────────────────"
+            )
             print("  Total Lookups:  ", self.total_lookups)
-            print("  [!] WARNING: Collisions detected! Total Probes:", self.total_probes)
+            print(
+                "  [!] WARNING: Collisions detected! Total Probes:",
+                self.total_probes,
+            )
             print("  Max probe run:  ", self.max_probe_run)
-            print("  This means your PerfectStationMap multiplier/shift failed for this dataset.")
+            print(
+                "  This means your PerfectStationMap multiplier/shift failed"
+                " for this dataset."
+            )
         else:
-            print("\n── Perfect Hashmap Collision Verification ───────────────────────────")
+            print(
+                "\n── Perfect Hashmap Collision Verification"
+                " ───────────────────────────"
+            )
             print("  Total Lookups:  ", self.total_lookups)
             print("  Status: Perfect! No collisions detected.")
 
@@ -75,59 +131,125 @@ struct MapMetrics(
         if other.max_probe_run > self.max_probe_run:
             self.max_probe_run = other.max_probe_run
 
+
 struct EmptyMapMetrics(
-    MapTracker, Copyable, ImplicitlyCopyable, Movable, ImplicitlyDeletable
+    Copyable, ImplicitlyCopyable, ImplicitlyDeletable, MapTracker, Movable
 ):
     comptime ACTIVE = False
-    def __init__(out self): pass
+
+    def __init__(out self):
+        pass
+
     @always_inline
-    def record_lookup(mut self): pass
+    def record_lookup(mut self):
+        pass
+
     @always_inline
-    def record_insert(mut self): pass
+    def record_insert(mut self):
+        pass
+
     @always_inline
-    def record_update(mut self): pass
+    def record_update(mut self):
+        pass
+
     @always_inline
-    def record_probe(mut self): pass
+    def record_probe(mut self):
+        pass
+
     @always_inline
-    def record_max_probe(mut self, run: Int): pass
-    def get_total_lookups(self) -> Int: return 0
-    def get_total_inserts(self) -> Int: return 0
-    def get_total_updates(self) -> Int: return 0
-    def get_total_probes(self) -> Int: return 0
-    def get_max_probe_run(self) -> Int: return 0
-    def print_summary(self): pass
-    def merge_from(mut self, imm other: Self): pass
+    def record_max_probe(mut self, run: Int):
+        pass
+
+    def get_total_lookups(self) -> Int:
+        return 0
+
+    def get_total_inserts(self) -> Int:
+        return 0
+
+    def get_total_updates(self) -> Int:
+        return 0
+
+    def get_total_probes(self) -> Int:
+        return 0
+
+    def get_max_probe_run(self) -> Int:
+        return 0
+
+    def print_summary(self):
+        pass
+
+    def merge_from(mut self, imm other: Self):
+        pass
+
 
 # ── Parser Analysis ───────────────────────────────────────────
 
-trait ParserTracker(
-    Copyable, Movable, ImplicitlyCopyable, ImplicitlyDeletable
-):
-    comptime ACTIVE: Bool
-    def __init__(out self): ...
-    def record_simd_iteration(mut self): ...
-    def record_simd_hit(mut self): ...
-    def record_single_newline_block(mut self): ...
-    def record_multi_newline_block(mut self): ...
-    def record_row_simd(mut self): ...
-    def record_row_tail(mut self): ...
-    def record_name(mut self, length: Int): ...
-    def record_missed_block(mut self, block: String): ...
-    def get_simd_iterations(self) -> Int: ...
-    def get_simd_hits(self) -> Int: ...
-    def get_single_newline_blocks(self) -> Int: ...
-    def get_multi_newline_blocks(self) -> Int: ...
-    def get_rows_simd(self) -> Int: ...
-    def get_rows_tail(self) -> Int: ...
-    def get_total_name_len(self) -> Int: ...
-    def get_max_name_len(self) -> Int: ...
-    def get_missed_blocks(self) -> List[String]: ...
-    def print_summary(self, size: Int, parse_s: Float64): ...
-    def merge_from(mut self, imm other: Self): ...
 
-struct ParserMetrics(
-    Copyable, Movable, ParserTracker, ImplicitlyDeletable
-):
+trait ParserTracker(Copyable, ImplicitlyCopyable, ImplicitlyDeletable, Movable):
+    comptime ACTIVE: Bool
+
+    def __init__(out self):
+        ...
+
+    def record_simd_iteration(mut self):
+        ...
+
+    def record_simd_hit(mut self):
+        ...
+
+    def record_single_newline_block(mut self):
+        ...
+
+    def record_multi_newline_block(mut self):
+        ...
+
+    def record_row_simd(mut self):
+        ...
+
+    def record_row_tail(mut self):
+        ...
+
+    def record_name(mut self, length: Int):
+        ...
+
+    def record_missed_block(mut self, block: String):
+        ...
+
+    def get_simd_iterations(self) -> Int:
+        ...
+
+    def get_simd_hits(self) -> Int:
+        ...
+
+    def get_single_newline_blocks(self) -> Int:
+        ...
+
+    def get_multi_newline_blocks(self) -> Int:
+        ...
+
+    def get_rows_simd(self) -> Int:
+        ...
+
+    def get_rows_tail(self) -> Int:
+        ...
+
+    def get_total_name_len(self) -> Int:
+        ...
+
+    def get_max_name_len(self) -> Int:
+        ...
+
+    def get_missed_blocks(self) -> List[String]:
+        ...
+
+    def print_summary(self, size: Int, parse_s: Float64):
+        ...
+
+    def merge_from(mut self, imm other: Self):
+        ...
+
+
+struct ParserMetrics(Copyable, ImplicitlyDeletable, Movable, ParserTracker):
     comptime ACTIVE = True
     var simd_iterations: Int
     var simd_hits: Int
@@ -235,27 +357,67 @@ struct ParserMetrics(
         return self.missed_blocks.copy()
 
     def print_summary(self, size: Int, parse_s: Float64):
-        var actual_rows = self.rows_simd + self.rows_tail
-        var actual_tput = Float64(actual_rows) / parse_s / 1_000_000.0
-        var actual_gb_s = Float64(size) / parse_s / (1024 * 1024 * 1024)
+        actual_rows = self.rows_simd + self.rows_tail
+        actual_tput = Float64(actual_rows) / parse_s / 1_000_000.0
+        actual_gb_s = Float64(size) / parse_s / (1024 * 1024 * 1024)
 
-        print("\n── Parser Metrics (`parse_chunk`) ───────────────────────────────────")
+        print(
+            "\n── Parser Metrics (`parse_chunk`)"
+            " ───────────────────────────────────"
+        )
         print("  Actual Parsed Rows: ", actual_rows)
-        print("  Throughput:         ", actual_tput, " M rows/s (", actual_gb_s, " GB/s)")
-        print("  Avg Row Length: ", Float64(size) / max(Float64(actual_rows), 1.0), " bytes")
-        print("  Avg Name Len:   ", Float64(self.total_name_len) / max(Float64(actual_rows), 1.0), " bytes")
+        print(
+            "  Throughput:         ",
+            actual_tput,
+            " M rows/s (",
+            actual_gb_s,
+            " GB/s)",
+        )
+        print(
+            "  Avg Row Length: ",
+            Float64(size) / max(Float64(actual_rows), 1.0),
+            " bytes",
+        )
+        print(
+            "  Avg Name Len:   ",
+            Float64(self.total_name_len) / max(Float64(actual_rows), 1.0),
+            " bytes",
+        )
         print("  Max Name Len:   ", self.max_name_len, " bytes")
         print("  SIMD Iterations:", self.simd_iterations)
-        var hit_pct = Float64(self.simd_hits) / max(Float64(self.simd_iterations), 1.0) * 100.0
-        print("  SIMD Hits:      ", self.simd_hits, " (", hit_pct, "% of 16-byte blocks had a newline)")
-        var single_pct = Float64(self.single_newline_blocks) / max(Float64(self.simd_hits), 1.0) * 100.0
-        print("  Single-newline: ", self.single_newline_blocks, " (", single_pct, "% of hit blocks)")
+        hit_pct = (
+            Float64(self.simd_hits)
+            / max(Float64(self.simd_iterations), 1.0)
+            * 100.0
+        )
+        print(
+            "  SIMD Hits:      ",
+            self.simd_hits,
+            " (",
+            hit_pct,
+            "% of 16-byte blocks had a newline)",
+        )
+        single_pct = (
+            Float64(self.single_newline_blocks)
+            / max(Float64(self.simd_hits), 1.0)
+            * 100.0
+        )
+        print(
+            "  Single-newline: ",
+            self.single_newline_blocks,
+            " (",
+            single_pct,
+            "% of hit blocks)",
+        )
         print("  Multi-newline:  ", self.multi_newline_blocks)
         print("  Rows via SIMD:  ", self.rows_simd)
         print("  Rows via Tail:  ", self.rows_tail)
 
         if len(self.missed_blocks) > 0:
-            print("\n── SIMD Miss Samples (Blocks with no newlines) ──────────────────────")
+            print(
+                "\n── SIMD Miss Samples (Blocks with no newlines)"
+                " ──────────────────────"
+            )
             for i in range(len(self.missed_blocks)):
                 print("  Sample ", i + 1, ": [", self.missed_blocks[i], "]")
 
@@ -274,9 +436,10 @@ struct ParserMetrics(
 
 
 struct EmptyParserMetrics(
-    Copyable, Movable, ParserTracker, ImplicitlyDeletable
+    Copyable, ImplicitlyDeletable, Movable, ParserTracker
 ):
     comptime ACTIVE = False
+
     def __init__(out self):
         pass
 

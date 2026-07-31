@@ -19,8 +19,20 @@ exact GPU form measured 143.384 ms median across paired samples and 139.139 ms
 for immediate warm repeats, versus 135.773 ms on the CPU reference. A later
 exact run under heavier concurrent PC activity measured 172.717 ms GPU versus
 145.157 ms CPU. Do not add GPU aggregation until indexing becomes materially
-faster and repeatable. Input preparation also remains a blocker: the warm
-copied-buffer path took 193–245 ms before any kernel.
+faster and repeatable. A direct-Metal MSL proof removed the explicit input copy:
+wrapping the 1.38 GB mmap took 0.057–0.085 ms and repeated exact scans measured
+21.373–28.492 ms. First access to a new file-backed Metal buffer remained
+variable at 70.954–723.192 ms, however, and the public Mojo GPU API cannot adopt
+that external buffer. Treat one-shot first-access cost and the MSL porting
+boundary as active gates.
+
+The exact direct-Metal temperature kernel retained a meaningful warm lead: its
+45.356 ms median was approximately 1.75x faster than the 79.495–79.570 ms
+parallel CPU temperature reference and about 23% faster than the copied Mojo
+GPU kernel. The direct-Metal station-index experiment then measured a 146.835 ms
+combined warm median, slower than the 135.773–145.157 ms CPU references. Stop
+before aggregation. It also does not change the one-shot recommendation:
+context plus the first useful dispatch remained slower than the CPU.
 
 ## Assessment of the CPU Kernel
 
@@ -194,16 +206,30 @@ Both series produced exactly 99,999,387 newlines before and after timing. The
 warm GPU series had 1.551 ms MAD and 3.313 ms IQR under normal machine use,
 without weakening an effect above 160%.
 
-The current high-level input path still copies the mmap into a Metal
+The high-level Mojo input path copies the mmap into a Metal
 `DeviceBuffer`. It took 2,077.689 ms immediately after materialization and
 245.106 ms with warm file data. The cold number includes file faults; the warm
 number alone is enough to show that a full-file copy erases the kernel
 advantage. Raw samples are under
 `results/benchmarks/20260730-gpu-scan-{cold,warm}/`.
 
+The direct-Metal bridge now proves that explicit staging is avoidable for an
+MSL kernel. `newBufferWithBytesNoCopy` wrapped the same mapping in less than
+0.1 ms, and 20 repeated exact scans had a 22.729 ms median. The first dispatch
+against each new file-backed buffer was much slower and variable, even after a
+CPU pre-touch. The bridge does not feed the external `MTLBuffer` into a
+Mojo-compiled kernel; extending it requires porting each retained kernel to MSL.
+Evidence is under `results/benchmarks/20260731-metal-zero-copy/`.
+
 The temperature-only kernel reads the four relevant temperature bytes at every
 newline and writes one row count and temperature sum per GPU thread. It does
 not hash station names or aggregate by station.
+
+The direct-Metal version returned the exact 99,999,387 rows and fixed-point sum
+17,828,649,656 on every run. Fifteen repeated calls had a 45.356 ms median and
+39.716–57.346 ms range. The compact-rank direct-Metal station index passed exact
+correctness but measured 146.835 ms warm median and failed to beat the CPU.
+Aggregation remains out of scope.
 
 | 100M temperature parsing | CPU SIMD | GPU kernel | GPU advantage |
 |---|---:|---:|---:|

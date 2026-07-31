@@ -49,9 +49,29 @@ This requires the official `modular` runtime and Xcode Metal Toolchain. It
 reports input staging separately, validates newline counts and temperature
 sums, and retains five CPU-GPU-GPU-CPU timing pairs for each stage.
 
-Each run uses reduced process priority, performs one warmup, pauses briefly
-between samples, and writes raw CSV, summary statistics, source fingerprint,
-toolchain, memory, load, and Git metadata under `results/benchmarks/`.
+The baseline harness uses reduced process priority, performs one warmup, pauses
+briefly between samples, and writes raw CSV, summary statistics, source
+fingerprint, toolchain, memory, load, and Git metadata under
+`results/benchmarks/`.
+
+Run the direct-Metal mmap zero-copy proof with:
+
+```bash
+pixi run gpu-zero-copy
+entrypoints/gpu-zero-copy.sh measurements_100m.txt --cpu-first
+entrypoints/gpu-zero-copy.sh measurements_100m.txt --temperature
+entrypoints/gpu-zero-copy.sh measurements_100m.txt --temperature --cpu-first
+entrypoints/gpu-zero-copy.sh measurements_100m.txt --station
+```
+
+This builds a small Objective-C++ bridge, wraps the existing Mojo mmap with
+Metal's `newBufferWithBytesNoCopy`, and runs an MSL newline, temperature, or
+station kernel. It reports context/pipeline creation, buffer wrapping, first
+dispatch, Metal device time, and repeated dispatch separately. `--temperature`
+and `--station` select exact parsing gates; `--cpu-first` pre-touches the file
+through the matching correctness scanner before Metal's first access. This
+diagnostic also runs at reduced process priority; retained measurements are
+recorded manually in the dated result directory.
 
 ## GPU Scan Gate — 2026-07-30
 
@@ -74,8 +94,34 @@ The temperature-only stage also passed:
 | Warm repeat | 79.570 ms | 59.211 ms | 1.34x |
 
 All runs produced the exact fixed-point temperature sum 17,828,649,656. The
-next gate is dense station indexing and workgroup aggregation. Raw evidence is
+next gate was dense station indexing. Raw evidence is
 under `results/benchmarks/20260730-gpu-temperature-{a,warm}/`.
+
+## Metal mmap Zero-copy Gate — 2026-07-31
+
+Metal wrapped the page-aligned 1,379,614,933-byte mmap in 0.057–0.085 ms and
+returned the exact 99,999,387 newline count on every dispatch. Twenty repeated
+bridge calls measured 21.373–28.492 ms with a 22.729 ms median. First dispatch
+wall time against a new file-backed buffer remained variable at 70.954–723.192
+ms, depending on file residency and normal concurrent machine activity.
+
+This proves no-copy input for MSL kernels. It does not make the external
+`MTLBuffer` consumable by a Mojo-compiled kernel because the public
+`DeviceBuffer` API has no adoption constructor. Raw evidence is under
+`results/benchmarks/20260731-metal-zero-copy/`.
+
+The temperature-only MSL kernel also passed exactly. Fifteen repeated warm
+calls measured 39.716–57.346 ms with a 45.356 ms median, approximately 1.75x
+faster than the established 79.495–79.570 ms parallel CPU temperature
+reference. GPU-first dispatch against a new mapping remained variable at
+201–747 ms. Raw evidence is in
+`results/benchmarks/20260731-metal-zero-copy/measurements_100m_temperature.md`.
+
+The direct-Metal compact-rank station index passed all five exact invariants but
+did not pass performance. Ten warm samples had a 146.835 ms median, versus
+135.773–145.157 ms across established parallel CPU references. Aggregation
+remains stopped. Raw evidence is in
+`results/benchmarks/20260731-metal-zero-copy/measurements_100m_station.md`.
 
 ## Metrics
 

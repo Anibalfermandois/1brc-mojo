@@ -5,9 +5,9 @@ Provides a thin wrapper around the POSIX mmap/munmap/open/close/fstat
 syscalls so Mojo code can memory-map files without copying bytes.
 
 Usage:
-    var m = MappedFile("measurements.txt")
-    var ptr  = m.ptr    # UnsafePointer[UInt8] into the mapped region
-    var size = m.size   # Int, total bytes
+    m = MappedFile("measurements.txt")
+    ptr = m.ptr    # UnsafePointer[UInt8] into the mapped region
+    size = m.size  # Int, total bytes
     m.close()           # unmaps and closes; always call this!
 
 The mapped region is read-only (PROT_READ) and uses MAP_SHARED.
@@ -43,11 +43,11 @@ struct MappedFile:
     var _fd: Int32
 
     def __init__(out self, path: String) raises:
-        var st = stat(path)
+        st = stat(path)
         self.size = Int(st.st_size)
 
-        var null_terminated_path = path + "\0"
-        var c_path = CStringSlice(null_terminated_path)
+        null_terminated_path = path + "\0"
+        c_path = CStringSlice(null_terminated_path)
         self._fd = external_call["open", Int32](
             c_path,
             Int32(O_RDONLY),
@@ -56,9 +56,7 @@ struct MappedFile:
         if self._fd < 0:
             raise Error("mmap: open() failed for: " + path)
 
-        var raw = external_call[
-            "mmap", UnsafePointer[UInt8, MutUntrackedOrigin]
-        ](
+        raw = external_call["mmap", UnsafePointer[UInt8, MutUntrackedOrigin]](
             Optional[UnsafePointer[UInt8, MutUntrackedOrigin]](),
             self.size,
             PROT_READ,
