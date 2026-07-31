@@ -11,12 +11,16 @@ heterogeneous implementation in which the CPU and GPU process independent byte
 ranges and merge their 413-station result maps. Do not use a fixed 50/50 split:
 assign work according to measured CPU and GPU throughput while both are active.
 
-The occupied scan and temperature-only kernels have passed their gates. On the
-100M input the GPU counted newlines 2.63–2.71x as fast as the parallel CPU SIMD
+The occupied scan and temperature-only kernels passed their gates. On the 100M
+input the GPU counted newlines 2.63–2.71x as fast as the parallel CPU SIMD
 scanner. Adding exact fixed-point temperature parsing reduced the advantage to
-1.30–1.34x. The next gate is dense station indexing and workgroup aggregation.
-Input preparation remains a separate blocker: the warm copied-buffer path took
-193–245 ms before either kernel.
+1.30–1.34x. Dense station indexing then consumed the remaining lead: the best
+exact GPU form measured 143.384 ms median across paired samples and 139.139 ms
+for immediate warm repeats, versus 135.773 ms on the CPU reference. A later
+exact run under heavier concurrent PC activity measured 172.717 ms GPU versus
+145.157 ms CPU. Do not add GPU aggregation until indexing becomes materially
+faster and repeatable. Input preparation also remains a blocker: the warm
+copied-buffer path took 193–245 ms before any kernel.
 
 ## Assessment of the CPU Kernel
 
@@ -212,9 +216,32 @@ advantage: station indexing and aggregation have only about 20 ms of isolated
 headroom over the equivalent CPU temperature parser. Raw samples are under
 `results/benchmarks/20260730-gpu-temperature-{a,warm}/`.
 
-## Proposed GPU Architecture
+The station-indexing gate tested scalar and SIMD backward boundary recovery,
+shared block masks, SIMD-group ballots, suffix-perfect hashing, direct dense
+maps, and compact rank maps. The retained form exploits the fixed station
+universe: an eight-byte suffix identifies 411 stations, a ninth byte separates
+`Alice Springs` from `Palm Springs`, and a 1.25 KiB occupancy-and-prefix
+structure maps perfect-hash slots to dense IDs.
 
-Use a workgroup-oriented kernel:
+| 100M station indexing | CPU | GPU |
+|---|---:|---:|
+| Faster paired series | 135.773 ms | 143.384 ms |
+| Immediate GPU repeats within faster series | — | 139.139 ms |
+| Final exact repeat under heavier activity | 145.157 ms | 172.717 ms |
+| Post-change exact verification | 140.796 ms | 163.695 ms |
+
+CPU and GPU matched exactly on row count, temperature sum, dense-ID sum,
+squared-ID sum, and invalid-row count. The GPU result has no aggregation
+headroom and does not justify a production or hybrid path. Normal PC use is a
+non-negotiable measurement condition, so the conclusion is best-observed near
+parity rather than repeatable parity. Raw samples and the rejected-variant
+summary are under
+`results/benchmarks/20260731-gpu-station-index/`.
+
+## Deferred GPU Architecture
+
+If indexing regains a material lead, use a workgroup-oriented aggregation
+kernel:
 
 1. Process the file in large tiles so GPU resource size is bounded and disk I/O
    can be pipelined.
@@ -224,7 +251,7 @@ Use a workgroup-oriented kernel:
    shuffle, or prefix operations to identify row boundaries.
 4. Apply the CPU's backward fixed-point temperature parsing technique to rows
    identified by the group.
-5. Map each station into a dense `0..412` index.
+5. Reuse the suffix-perfect-hash rank map to produce dense `0..412` indices.
 6. Aggregate into one compact 413-entry table in threadgroup memory.
 7. Initialize that table cooperatively.
 8. Flush one partial table per workgroup and reduce the partial tables in a
@@ -294,16 +321,20 @@ Before comparing implementations:
 5. Treat effects below 5% as inconclusive unless repeated evidence clearly
    exceeds observed dispersion.
 
-Build the GPU investigation incrementally:
+The GPU investigation gates are:
 
 1. **Passed:** count newlines on resident data and materially exceed the CPU
    scanner.
 2. **Passed:** add row and temperature parsing without aggregation.
-3. **Next:** add dense station indexing and threadgroup aggregation.
-4. Measure input preparation, kernel execution, and result reduction separately.
-5. Compare CPU-only, GPU-only, fixed-split hybrid, and throughput-weighted hybrid.
-6. Repeat on both warm resident input and cold or larger-than-memory input.
-7. Require exact result equivalence at every stage.
+3. **Stopped:** dense station indexing is at best near CPU parity and leaves no
+   workgroup-aggregation headroom.
+4. **Blocked:** full input copies already erase the kernel-only advantage.
+
+Resume only after a compiler, mapping, or no-copy change materially improves
+these gates. Then measure input preparation, kernel execution, and result
+reduction separately; compare CPU-only, GPU-only, fixed-split hybrid, and
+throughput-weighted hybrid; repeat on warm and cold inputs; and require exact
+result equivalence at every stage.
 
 Stop the investigation if any of these remain true after the workgroup redesign:
 
@@ -325,10 +356,10 @@ entries, peeled newline handling, mask-guard removal, and work stealing. The
 regenerated streaming curve and lazy-mmap series are the performance baselines
 for future comparisons.
 
-The GPU byte scanner and temperature parser are fast enough to justify one
-workgroup-aggregation experiment. This does not yet justify a GPU or hybrid
-production path: the current copied input path is already slower than the CPU
-parser end to end, and station indexing plus aggregation may consume the
-remaining 1.30–1.34x kernel advantage. Continue in the isolated prototype with
-explicit stop conditions. Promote a GPU or hybrid path only if it wins on exact,
-end-to-end wall time with measured input preparation.
+The GPU byte scanner and temperature parser remain useful research baselines,
+but dense station indexing closes their kernel-only lead before aggregation.
+Keep the suffix/rank prototype for future compiler and mapping experiments; do
+not implement workgroup aggregation or a hybrid production path from the
+present evidence. Reopen the GPU track only after station indexing materially
+beats the CPU reference and a measured no-copy input path removes staging from
+the critical path.
